@@ -92,29 +92,30 @@ export default async function AccountDetailPage({
     credit: string | null;
   }[] = [];
   try {
-    if (account.accountCode) {
-      glTxns = await db
-        .select({
-          id: glTransactions.id,
-          transactionDate: glTransactions.transactionDate,
-          description: glTransactions.description,
-          reference: glTransactions.reference,
-          contact: glTransactions.contact,
-          source: glTransactions.source,
-          debit: glTransactions.debit,
-          credit: glTransactions.credit,
-        })
-        .from(glTransactions)
-        .where(
-          and(
-            eq(glTransactions.clientId, clientId),
-            eq(glTransactions.accountCode, account.accountCode),
-            gte(glTransactions.transactionDate, periodStart),
-            lte(glTransactions.transactionDate, periodEnd)
-          )
+    // Match GL transactions by accountName (works for both GL export formats).
+    // The balance sheet pull doesn't populate accountCode, but accountName
+    // always matches between the BS report and the GL file headers.
+    glTxns = await db
+      .select({
+        id: glTransactions.id,
+        transactionDate: glTransactions.transactionDate,
+        description: glTransactions.description,
+        reference: glTransactions.reference,
+        contact: glTransactions.contact,
+        source: glTransactions.source,
+        debit: glTransactions.debit,
+        credit: glTransactions.credit,
+      })
+      .from(glTransactions)
+      .where(
+        and(
+          eq(glTransactions.clientId, clientId),
+          eq(glTransactions.accountName, account.accountName),
+          gte(glTransactions.transactionDate, periodStart),
+          lte(glTransactions.transactionDate, periodEnd)
         )
-        .orderBy(glTransactions.transactionDate);
-    }
+      )
+      .orderBy(glTransactions.transactionDate);
   } catch {
     // GL tables not migrated yet
   }
