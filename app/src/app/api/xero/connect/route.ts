@@ -33,8 +33,8 @@ export async function GET(request: NextRequest) {
   const csrfToken = randomBytes(16).toString("hex");
   const state = `${clientId}:${csrfToken}`;
 
-  // Build the callback URL from the request
-  const baseUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+  // Build the callback URL - use APP_URL env var to get correct https:// behind reverse proxies
+  const baseUrl = process.env.APP_URL || `${request.nextUrl.protocol}//${request.nextUrl.host}`;
   const redirectUri = `${baseUrl}/api/xero/callback`;
 
   const params = new URLSearchParams({

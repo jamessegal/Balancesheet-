@@ -1,0 +1,13 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "cd app && pnpm install && pnpm build",
+    "watchPatterns": ["app/**"]
+  },
+  "deploy": {
+    "startCommand": "cd app && pnpm start",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}

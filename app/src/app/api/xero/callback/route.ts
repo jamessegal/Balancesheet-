@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
 
   const xeroClientId = process.env.XERO_CLIENT_ID!;
   const xeroClientSecret = process.env.XERO_CLIENT_SECRET!;
-  const baseUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+  const baseUrl = process.env.APP_URL || `${request.nextUrl.protocol}//${request.nextUrl.host}`;
   const redirectUri = `${baseUrl}/api/xero/callback`;
 
   // Exchange code for tokens
