@@ -224,11 +224,12 @@ export async function pullTransactions(accountId: string) {
   const endDate = `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
   try {
-    // Fetch journals and filter for this account
-    // Rate limit: max ~50 calls/min to stay under Xero's 60/min limit
-    let offset = 0;
+    // Fetch journals for this account within the period date range.
+    // Xero Journals API only paginates forward by journal number (no date filter),
+    // so we use exponential probing + binary search to jump to the right date range
+    // instead of scanning from journal #0 (which can be thousands of wasted calls).
     let apiCalls = 0;
-    const MAX_API_CALLS = 40; // Safety cap
+    const MAX_API_CALLS = 30;
     const DELAY_MS = 1200; // 1.2s between calls = ~50/min
 
     const allLines: {
@@ -245,46 +246,98 @@ export async function pullTransactions(accountId: string) {
 
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    // Xero journals API paginates with offset (journal number)
-    let hasMore = true;
-    while (hasMore) {
-      if (apiCalls >= MAX_API_CALLS) {
-        console.log(`Xero: Hit API call cap (${MAX_API_CALLS}), stopping pagination`);
-        break;
-      }
-
-      if (apiCalls > 0) {
-        await sleep(DELAY_MS);
-      }
-
+    async function fetchPage(offset: number): Promise<XeroJournalsResponse> {
+      if (apiCalls > 0) await sleep(DELAY_MS);
       apiCalls++;
-      console.log(`Xero: Fetching journals page ${apiCalls}, offset=${offset}`);
-
-      const data = await xeroGet<XeroJournalsResponse>(
+      console.log(`Xero: API call ${apiCalls}/${MAX_API_CALLS}, offset=${offset}`);
+      return xeroGet<XeroJournalsResponse>(
         connection.id,
         connection.xeroTenantId,
         `/Journals?offset=${offset}&pastPayments=true`
       );
+    }
+
+    function lastDateOf(journals: XeroJournal[]) {
+      return journals[journals.length - 1].JournalDate.split("T")[0];
+    }
+
+    function lastNumOf(journals: XeroJournal[]) {
+      return journals[journals.length - 1].JournalNumber;
+    }
+
+    console.log(`Xero: Searching for journals between ${startDate} and ${endDate}, account ${account.xeroAccountId}`);
+
+    // ── Phase 1: Exponential probe to bracket the start date ──
+    // Jump forward by doubling steps until we find journals at/past startDate
+    let low = 0;
+    let high = 0;
+    let step = 100;
+
+    while (apiCalls < MAX_API_CALLS) {
+      const data = await fetchPage(high);
 
       if (!data.Journals || data.Journals.length === 0) {
-        hasMore = false;
+        // Past all journals — bracket is [low, high]
+        console.log(`Xero: No journals at offset=${high}, total range is [0, ${high}]`);
+        break;
+      }
+
+      const batchLastDate = lastDateOf(data.Journals);
+      const batchLastNum = lastNumOf(data.Journals);
+
+      if (batchLastDate >= startDate) {
+        // Found the bracket — journals before `low` are too early,
+        // journals at `high` include our date range
+        console.log(`Xero: Bracketed date range to offsets [${low}, ${high}]`);
+        break;
+      }
+
+      // Everything in this batch is still before our date range, jump further
+      low = batchLastNum;
+      step = Math.min(step * 2, 10000); // double the jump, cap at 10k
+      high = low + step;
+    }
+
+    // ── Phase 2: Binary search to narrow down the start ──
+    // Find the lowest offset where journals have dates >= startDate
+    while (high - low > 100 && apiCalls < MAX_API_CALLS) {
+      const mid = Math.floor((low + high) / 2);
+      const data = await fetchPage(mid);
+
+      if (!data.Journals || data.Journals.length === 0) {
+        high = mid;
+        continue;
+      }
+
+      if (lastDateOf(data.Journals) < startDate) {
+        low = lastNumOf(data.Journals);
+      } else {
+        high = mid;
+      }
+    }
+
+    console.log(`Xero: Narrowed start to offset=${low}, beginning collection`);
+
+    // ── Phase 3: Paginate forward through the date range ──
+    let offset = low;
+    let hasMore = true;
+
+    while (hasMore && apiCalls < MAX_API_CALLS) {
+      const data = await fetchPage(offset);
+
+      if (!data.Journals || data.Journals.length === 0) {
         break;
       }
 
       for (const journal of data.Journals) {
         const journalDate = journal.JournalDate.split("T")[0];
 
-        // Filter by date range
-        if (journalDate < startDate) {
-          continue;
-        }
+        if (journalDate < startDate) continue;
         if (journalDate > endDate) {
-          // Journals are in chronological order, so we can stop
           hasMore = false;
           break;
         }
 
-        // Find lines for this specific account
         for (const line of journal.JournalLines) {
           if (line.AccountID === account.xeroAccountId) {
             const amount = line.NetAmount || 0;
@@ -303,10 +356,10 @@ export async function pullTransactions(accountId: string) {
         }
       }
 
-      offset = data.Journals[data.Journals.length - 1].JournalNumber;
+      offset = lastNumOf(data.Journals);
     }
 
-    console.log(`Xero: Completed with ${apiCalls} API calls, found ${allLines.length} transactions`);
+    console.log(`Xero: Done — ${apiCalls} API calls, found ${allLines.length} transactions`);
 
     // Clear existing transactions for this account and insert new ones
     await db
