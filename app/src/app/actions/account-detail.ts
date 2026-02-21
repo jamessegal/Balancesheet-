@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/schema";
 import { requireRole } from "@/lib/authorization";
 import { xeroGet } from "@/lib/xero/client";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 // ------------------------------------------------------------------
@@ -160,29 +160,87 @@ export async function getAccountNotes(accountId: string) {
 // ------------------------------------------------------------------
 // Pull transactions from Xero for an account
 // ------------------------------------------------------------------
+// The Xero Journals endpoint is incomplete — it doesn't include entries
+// for "system accounts" (AR, AP, GST, etc.) and has no date filtering.
+// Instead we query the individual transaction endpoints that DO support
+// date-range filtering: BankTransactions, ManualJournals, and Invoices.
+// Each returns line items with AccountCode which we match to our account.
+// ------------------------------------------------------------------
 
-interface XeroJournalLine {
-  JournalLineID: string;
-  AccountID: string;
-  AccountCode: string;
-  AccountName: string;
-  NetAmount: number;
-  GrossAmount: number;
-  TaxAmount: number;
-  Description?: string;
-}
-
-interface XeroJournal {
-  JournalID: string;
-  JournalDate: string;
-  JournalNumber: number;
+interface XeroBankTransaction {
+  BankTransactionID: string;
+  Type: string;
+  Date: string;
   Reference?: string;
-  SourceType?: string;
-  JournalLines: XeroJournalLine[];
+  Status: string;
+  Contact?: { Name: string };
+  LineItems: {
+    LineItemID: string;
+    AccountCode: string;
+    Description?: string;
+    LineAmount: number;
+    TaxAmount: number;
+  }[];
 }
 
-interface XeroJournalsResponse {
-  Journals: XeroJournal[];
+interface XeroManualJournal {
+  ManualJournalID: string;
+  Date: string;
+  Narration?: string;
+  Status: string;
+  JournalLines: {
+    JournalLineID?: string;
+    AccountCode: string;
+    Description?: string;
+    LineAmount: number;
+    TaxAmount: number;
+  }[];
+}
+
+interface XeroInvoice {
+  InvoiceID: string;
+  Type: string;
+  Date: string;
+  InvoiceNumber?: string;
+  Reference?: string;
+  Status: string;
+  Contact?: { Name: string };
+  LineItems: {
+    LineItemID: string;
+    AccountCode: string;
+    Description?: string;
+    LineAmount: number;
+    TaxAmount: number;
+  }[];
+}
+
+interface XeroCreditNote {
+  CreditNoteID: string;
+  Type: string;
+  Date: string;
+  CreditNoteNumber?: string;
+  Reference?: string;
+  Status: string;
+  Contact?: { Name: string };
+  LineItems: {
+    LineItemID: string;
+    AccountCode: string;
+    Description?: string;
+    LineAmount: number;
+    TaxAmount: number;
+  }[];
+}
+
+interface TransactionLine {
+  journalLineId: string;
+  journalId: string;
+  date: string;
+  description: string;
+  reference: string;
+  debit: string;
+  credit: string;
+  sourceType: string;
+  rawData: unknown;
 }
 
 export async function pullTransactions(accountId: string) {
@@ -218,130 +276,212 @@ export async function pullTransactions(accountId: string) {
     return { error: "No active Xero connection" };
   }
 
-  // Date range for the period
-  const startDate = `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}-01`;
   const lastDay = new Date(period.periodYear, period.periodMonth, 0).getDate();
-  const endDate = `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
   try {
-    // Fetch journals for this account within the period date range.
-    // We use Xero's If-Modified-Since header to only retrieve journals
-    // created/modified recently, then paginate forward filtering by date.
-    // This avoids scanning thousands of old journals.
     let apiCalls = 0;
-    const MAX_API_CALLS = 30;
-    const DELAY_MS = 1200; // 1.2s between calls = ~50/min
-
-    const allLines: {
-      journalLineId: string;
-      journalId: string;
-      date: string;
-      description: string;
-      reference: string;
-      debit: string;
-      credit: string;
-      sourceType: string;
-      rawData: unknown;
-    }[] = [];
-
+    const DELAY_MS = 1200; // 1.2s between calls ≈ 50/min
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    // Set If-Modified-Since to 60 days before period start to catch
-    // journals created in advance for this period
-    const modifiedSince = new Date(period.periodYear, period.periodMonth - 1, 1);
-    modifiedSince.setDate(modifiedSince.getDate() - 60);
-    const modifiedSinceHeader = modifiedSince.toUTCString();
-
-    async function fetchPage(offset: number): Promise<XeroJournalsResponse> {
+    async function xeroCall<T>(path: string): Promise<T> {
       if (apiCalls > 0) await sleep(DELAY_MS);
       apiCalls++;
-      console.log(`Xero: API call ${apiCalls}/${MAX_API_CALLS}, offset=${offset}`);
-      return xeroGet<XeroJournalsResponse>(
-        connection.id,
-        connection.xeroTenantId,
-        `/Journals?offset=${offset}`,
-        { "If-Modified-Since": modifiedSinceHeader }
-      );
+      const endpoint = path.split("?")[0];
+      console.log(`Xero: API call ${apiCalls}, ${endpoint}`);
+      return xeroGet<T>(connection.id, connection.xeroTenantId, path);
     }
 
-    function lastNumOf(journals: XeroJournal[]) {
-      return journals[journals.length - 1].JournalNumber;
+    // Step 1: Look up the account code from Xero's Chart of Accounts
+    console.log(`Xero: Looking up account ${account.xeroAccountId}`);
+
+    const accountResp = await xeroCall<{
+      Accounts: { AccountID: string; Code: string; Name: string }[];
+    }>(`/Accounts/${account.xeroAccountId}`);
+
+    const xeroAccount = accountResp.Accounts?.[0];
+    if (!xeroAccount?.Code) {
+      return { error: "Account not found in Xero Chart of Accounts" };
     }
 
-    console.log(`Xero: Searching for journals between ${startDate} and ${endDate}, account ${account.xeroAccountId}`);
-    console.log(`Xero: Using If-Modified-Since: ${modifiedSinceHeader}`);
+    const accountCode = xeroAccount.Code;
+    console.log(
+      `Xero: Account code "${accountCode}" (${xeroAccount.Name}), ` +
+        `fetching transactions for ${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}`
+    );
 
-    // Paginate forward through journals modified since our cutoff date,
-    // collecting any that fall within our period and match our account.
-    let offset = 0;
-    let hasMore = true;
-    let totalJournalsSeen = 0;
-    let journalsInRange = 0;
-    const seenAccountIds = new Set<string>();
+    // Step 2: Build Xero OData date filter
+    const y = period.periodYear;
+    const m = period.periodMonth;
+    const dateFilter = encodeURIComponent(
+      `Date >= DateTime(${y},${m},1) && Date <= DateTime(${y},${m},${lastDay})`
+    );
 
-    while (hasMore && apiCalls < MAX_API_CALLS) {
-      const data = await fetchPage(offset);
+    const allLines: TransactionLine[] = [];
 
-      if (!data.Journals || data.Journals.length === 0) {
-        break;
+    // ── Helper: paginate a Xero endpoint ──
+    async function fetchAllPages<T>(
+      basePath: string,
+      arrayKey: string,
+      maxPages = 10
+    ): Promise<T[]> {
+      const results: T[] = [];
+      for (let page = 1; page <= maxPages; page++) {
+        const data = await xeroCall<Record<string, T[]>>(
+          `${basePath}${basePath.includes("?") ? "&" : "?"}page=${page}`
+        );
+        const items = data[arrayKey];
+        if (!items || items.length === 0) break;
+        results.push(...items);
+        if (items.length < 100) break;
       }
+      return results;
+    }
 
-      totalJournalsSeen += data.Journals.length;
+    // ── Step 3: BankTransactions ──
+    const bankTxns = await fetchAllPages<XeroBankTransaction>(
+      `/BankTransactions?where=${dateFilter}`,
+      "BankTransactions"
+    );
 
-      for (const journal of data.Journals) {
-        const journalDate = journal.JournalDate.split("T")[0];
+    for (const txn of bankTxns) {
+      if (txn.Status === "DELETED") continue;
+      const txnDate = txn.Date.split("T")[0];
 
-        // Skip journals before our date range (they were modified recently
-        // but dated earlier)
-        if (journalDate < startDate) continue;
-
-        // Stop if we've gone past our date range
-        if (journalDate > endDate) {
-          hasMore = false;
-          break;
-        }
-
-        journalsInRange++;
-        for (const line of journal.JournalLines) {
-          // Collect unique account IDs for diagnostics (first 200 journals only)
-          if (journalsInRange <= 200) {
-            seenAccountIds.add(line.AccountID);
-          }
-
-          if (line.AccountID === account.xeroAccountId) {
-            const amount = line.NetAmount || 0;
-            allLines.push({
-              journalLineId: line.JournalLineID,
-              journalId: journal.JournalID,
-              date: journalDate,
-              description: line.Description || "",
-              reference: journal.Reference || "",
-              debit: amount > 0 ? String(amount) : "0",
-              credit: amount < 0 ? String(Math.abs(amount)) : "0",
-              sourceType: journal.SourceType || "",
-              rawData: { journal, line },
-            });
-          }
+      for (const line of txn.LineItems || []) {
+        if (line.AccountCode === accountCode) {
+          // SPEND types = debit to the line item account
+          // RECEIVE types = credit to the line item account
+          const isDebit = txn.Type.startsWith("SPEND");
+          const amount = Math.abs(line.LineAmount);
+          allLines.push({
+            journalLineId: line.LineItemID || txn.BankTransactionID,
+            journalId: txn.BankTransactionID,
+            date: txnDate,
+            description:
+              line.Description || txn.Contact?.Name || "",
+            reference: txn.Reference || "",
+            debit: isDebit ? String(amount) : "0",
+            credit: isDebit ? "0" : String(amount),
+            sourceType: `BANK-${txn.Type}`,
+            rawData: { bankTransaction: txn, lineItem: line },
+          });
         }
       }
+    }
+    console.log(
+      `Xero: BankTransactions — ${bankTxns.length} total, ${allLines.length} lines match account ${accountCode}`
+    );
 
-      offset = lastNumOf(data.Journals);
-    }
+    // ── Step 4: ManualJournals ──
+    const prevCount = allLines.length;
+    const manualJournals = await fetchAllPages<XeroManualJournal>(
+      `/ManualJournals?where=${dateFilter}`,
+      "ManualJournals"
+    );
 
-    console.log(`Xero: Done — ${apiCalls} API calls, ${totalJournalsSeen} journals scanned, ${journalsInRange} in date range, found ${allLines.length} matching transactions`);
-    console.log(`Xero: Looking for account ID: ${account.xeroAccountId}`);
-    if (journalsInRange > 0) {
-      console.log(`Xero: Unique account IDs in range: ${seenAccountIds.size}`);
-    }
-    if (allLines.length === 0 && seenAccountIds.size > 0) {
-      const sample = [...seenAccountIds].slice(0, 10);
-      console.log(`Xero: Sample account IDs from journals: ${sample.join(", ")}`);
-    }
-    if (allLines.length === 0 && totalJournalsSeen === 0) {
-      console.log(`Xero: WARNING — No journals returned at all. If-Modified-Since may be filtering everything out.`);
-    }
+    for (const mj of manualJournals) {
+      if (mj.Status === "VOIDED") continue;
+      const mjDate = mj.Date.split("T")[0];
 
-    // Clear existing transactions for this account and insert new ones
+      for (const line of mj.JournalLines || []) {
+        if (line.AccountCode === accountCode) {
+          // ManualJournal: positive LineAmount = debit, negative = credit
+          const amount = line.LineAmount;
+          allLines.push({
+            journalLineId: line.JournalLineID || mj.ManualJournalID,
+            journalId: mj.ManualJournalID,
+            date: mjDate,
+            description: line.Description || mj.Narration || "",
+            reference: mj.Narration || "",
+            debit: amount > 0 ? String(amount) : "0",
+            credit: amount < 0 ? String(Math.abs(amount)) : "0",
+            sourceType: "MANJOURNAL",
+            rawData: { manualJournal: mj, journalLine: line },
+          });
+        }
+      }
+    }
+    console.log(
+      `Xero: ManualJournals — ${manualJournals.length} total, ${allLines.length - prevCount} lines match`
+    );
+
+    // ── Step 5: Invoices (bills & sales invoices with line items coded to this account) ──
+    const prevCount2 = allLines.length;
+    const invoices = await fetchAllPages<XeroInvoice>(
+      `/Invoices?where=${dateFilter}`,
+      "Invoices"
+    );
+
+    for (const inv of invoices) {
+      if (inv.Status === "DELETED" || inv.Status === "VOIDED") continue;
+      const invDate = inv.Date.split("T")[0];
+
+      for (const line of inv.LineItems || []) {
+        if (line.AccountCode === accountCode) {
+          // ACCPAY (purchase bill): line items are debits to the coded account
+          // ACCREC (sales invoice): line items are credits to the coded account
+          const isDebit = inv.Type === "ACCPAY";
+          const amount = Math.abs(line.LineAmount);
+          allLines.push({
+            journalLineId: line.LineItemID || inv.InvoiceID,
+            journalId: inv.InvoiceID,
+            date: invDate,
+            description:
+              line.Description || inv.Contact?.Name || "",
+            reference: inv.InvoiceNumber || inv.Reference || "",
+            debit: isDebit ? String(amount) : "0",
+            credit: isDebit ? "0" : String(amount),
+            sourceType: `INVOICE-${inv.Type}`,
+            rawData: { invoice: inv, lineItem: line },
+          });
+        }
+      }
+    }
+    console.log(
+      `Xero: Invoices — ${invoices.length} total, ${allLines.length - prevCount2} lines match`
+    );
+
+    // ── Step 6: CreditNotes (reverse of invoices) ──
+    const prevCount3 = allLines.length;
+    const creditNotes = await fetchAllPages<XeroCreditNote>(
+      `/CreditNotes?where=${dateFilter}`,
+      "CreditNotes"
+    );
+
+    for (const cn of creditNotes) {
+      if (cn.Status === "DELETED" || cn.Status === "VOIDED") continue;
+      const cnDate = cn.Date.split("T")[0];
+
+      for (const line of cn.LineItems || []) {
+        if (line.AccountCode === accountCode) {
+          // ACCPAYCREDIT: line items are credits (reverses a bill debit)
+          // ACCRECCREDIT: line items are debits (reverses a sales credit)
+          const isDebit = cn.Type === "ACCRECCREDIT";
+          const amount = Math.abs(line.LineAmount);
+          allLines.push({
+            journalLineId: line.LineItemID || cn.CreditNoteID,
+            journalId: cn.CreditNoteID,
+            date: cnDate,
+            description:
+              line.Description || cn.Contact?.Name || "",
+            reference: cn.CreditNoteNumber || cn.Reference || "",
+            debit: isDebit ? String(amount) : "0",
+            credit: isDebit ? "0" : String(amount),
+            sourceType: `CREDITNOTE-${cn.Type}`,
+            rawData: { creditNote: cn, lineItem: line },
+          });
+        }
+      }
+    }
+    console.log(
+      `Xero: CreditNotes — ${creditNotes.length} total, ${allLines.length - prevCount3} lines match`
+    );
+
+    console.log(
+      `Xero: Done — ${apiCalls} API calls, found ${allLines.length} total transactions for account ${accountCode}`
+    );
+
+    // ── Save to database ──
     await db
       .delete(accountTransactions)
       .where(eq(accountTransactions.reconAccountId, accountId));
@@ -363,7 +503,6 @@ export async function pullTransactions(accountId: string) {
       );
     }
 
-    // Update last synced
     await db
       .update(reconciliationAccounts)
       .set({ lastSyncedAt: new Date(), updatedAt: new Date() })
