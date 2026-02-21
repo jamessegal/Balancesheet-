@@ -16,4 +16,5 @@ RUN pnpm build
 EXPOSE 3000
 ENV PORT=3000
 
-CMD ["pnpm", "start"]
+# Push DB schema then start the server
+CMD pnpm db:push && pnpm start
