@@ -88,18 +88,30 @@ export default async function AccountDetailPage({
     .where(eq(accountNotes.reconAccountId, accountId))
     .orderBy(desc(accountNotes.createdAt));
 
-  const reconItems = await db
-    .select({
-      id: reconciliationItems.id,
-      description: reconciliationItems.description,
-      amount: reconciliationItems.amount,
-      createdAt: reconciliationItems.createdAt,
-      createdByName: users.name,
-    })
-    .from(reconciliationItems)
-    .leftJoin(users, eq(reconciliationItems.createdBy, users.id))
-    .where(eq(reconciliationItems.reconAccountId, accountId))
-    .orderBy(reconciliationItems.createdAt);
+  // Gracefully handle missing table (migration 0002 may not be applied yet)
+  let reconItems: {
+    id: string;
+    description: string;
+    amount: string;
+    createdAt: Date;
+    createdByName: string | null;
+  }[] = [];
+  try {
+    reconItems = await db
+      .select({
+        id: reconciliationItems.id,
+        description: reconciliationItems.description,
+        amount: reconciliationItems.amount,
+        createdAt: reconciliationItems.createdAt,
+        createdByName: users.name,
+      })
+      .from(reconciliationItems)
+      .leftJoin(users, eq(reconciliationItems.createdBy, users.id))
+      .where(eq(reconciliationItems.reconAccountId, accountId))
+      .orderBy(reconciliationItems.createdAt);
+  } catch {
+    // Table doesn't exist yet — show empty schedule
+  }
 
   const periodLabel = `${MONTH_NAMES[period.periodMonth - 1]} ${period.periodYear}`;
   const badge = STATUS_BADGES[account.status] || STATUS_BADGES.draft;
