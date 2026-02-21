@@ -1,10 +1,12 @@
 /**
- * Parse a Xero General Ledger (Detailed) Excel report.
+ * Parse a Xero General Ledger / Account Transactions Excel report.
  *
- * Handles multiple Xero GL export formats:
- *  - Global header row at the top + account sections below
- *  - Per-account-section header rows (headers repeated under each account)
- *  - Various column name conventions (Date/date, Debit/Dr, Credit/Cr, etc.)
+ * Supports two Xero export flavours:
+ *
+ * A) "General Ledger (Detailed)" — account headers like "620 - Prepayments"
+ * B) "Account Transactions" — account headers like "Accounts Payable"
+ *    with columns: Date | Source | Description | Reference | Currency |
+ *    Debit (Source) | Credit (Source) | Debit (GBP) | Credit (GBP) | Running Balance (GBP)
  */
 import * as XLSX from "xlsx";
 
@@ -25,16 +27,20 @@ export interface GLParseResult {
   dateFrom: string | null;
   dateTo: string | null;
   accountCount: number;
-  accounts: string[]; // "620 - Prepayments", etc.
+  accounts: string[]; // "620 - Prepayments", "Accounts Payable", etc.
 }
 
-// Account header patterns:
-//   "620 - Prepayments"
-//   "620 – Prepayments (Revenue)"
-//   "Account: 620 - Prepayments"
-const ACCOUNT_HEADER_RE = /^(?:Account:?\s*)?(\d{2,5})\s*[-–—]\s*(.+)$/;
+// ── Column detection ──
 
-// Column name matching — case insensitive, trimmed
+// "Debit (GBP)" → true, "Debit (Source)" → true, "Debit" → true, "Dr" → true
+function isDebitCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return l === "debit" || l === "dr" || l === "dr." || l.startsWith("debit");
+}
+function isCreditCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return l === "credit" || l === "cr" || l === "cr." || l.startsWith("credit");
+}
 function isDateCol(s: string): boolean {
   const l = s.toLowerCase().trim();
   return l === "date" || l === "trans date" || l === "transaction date";
@@ -46,10 +52,7 @@ function isSourceCol(s: string): boolean {
 function isContactCol(s: string): boolean {
   const l = s.toLowerCase().trim();
   return (
-    l === "contact" ||
-    l === "name" ||
-    l === "contact name" ||
-    l === "payee"
+    l === "contact" || l === "name" || l === "contact name" || l === "payee"
   );
 }
 function isDescCol(s: string): boolean {
@@ -65,15 +68,17 @@ function isDescCol(s: string): boolean {
 }
 function isRefCol(s: string): boolean {
   const l = s.toLowerCase().trim();
-  return l === "reference" || l === "ref" || l === "ref." || l === "invoice number";
+  return (
+    l === "reference" || l === "ref" || l === "ref." || l === "invoice number"
+  );
 }
-function isDebitCol(s: string): boolean {
-  const l = s.toLowerCase().trim();
-  return l === "debit" || l === "dr" || l === "dr.";
-}
-function isCreditCol(s: string): boolean {
-  const l = s.toLowerCase().trim();
-  return l === "credit" || l === "cr" || l === "cr.";
+
+/** Returns true if the column header looks like a local/reporting currency amount. */
+function isLocalCurrency(header: string): boolean {
+  const l = header.toLowerCase();
+  // "Debit (GBP)", "Credit (GBP)", "Debit (NZD)", etc.
+  // Prefer these over "(Source)" columns
+  return /\([a-z]{3}\)/.test(l) && !l.includes("source");
 }
 
 interface ColMap {
@@ -86,39 +91,114 @@ interface ColMap {
   credit?: number;
 }
 
-/** Try to detect column headers from a single row. Returns null if not a header row. */
+/**
+ * Detect column headers from a single row.
+ * When there are both (Source) and (GBP) columns, prefer the local currency.
+ */
 function detectHeaders(row: unknown[]): ColMap | null {
   if (!row || row.length < 3) return null;
 
   const cells = row.map((c) => String(c ?? "").trim());
 
   let dateIdx = -1;
-  let debitIdx = -1;
-  let creditIdx = -1;
+  // Track multiple debit/credit columns so we can pick the best one
+  const debitCols: { idx: number; local: boolean }[] = [];
+  const creditCols: { idx: number; local: boolean }[] = [];
 
   for (let j = 0; j < cells.length; j++) {
-    if (isDateCol(cells[j])) dateIdx = j;
-    if (isDebitCol(cells[j])) debitIdx = j;
-    if (isCreditCol(cells[j])) creditIdx = j;
+    const c = cells[j];
+    if (isDateCol(c)) dateIdx = j;
+    if (isDebitCol(c)) debitCols.push({ idx: j, local: isLocalCurrency(c) });
+    if (isCreditCol(c)) creditCols.push({ idx: j, local: isLocalCurrency(c) });
   }
 
-  // Need at least Date + one of Debit/Credit
-  if (dateIdx === -1 || (debitIdx === -1 && creditIdx === -1)) return null;
+  if (dateIdx === -1 || (debitCols.length === 0 && creditCols.length === 0)) {
+    return null;
+  }
+
+  // Prefer local currency columns; fall back to first match
+  const pickBest = (cols: { idx: number; local: boolean }[]) => {
+    const local = cols.find((c) => c.local);
+    return (local ?? cols[0])?.idx;
+  };
 
   const map: ColMap = { date: dateIdx };
-  if (debitIdx !== -1) map.debit = debitIdx;
-  if (creditIdx !== -1) map.credit = creditIdx;
+  const debitIdx = pickBest(debitCols);
+  const creditIdx = pickBest(creditCols);
+  if (debitIdx !== undefined) map.debit = debitIdx;
+  if (creditIdx !== undefined) map.credit = creditIdx;
+
+  const usedIdxs = new Set([dateIdx, debitIdx, creditIdx]);
 
   for (let j = 0; j < cells.length; j++) {
-    if (j === dateIdx || j === debitIdx || j === creditIdx) continue;
-    if (isSourceCol(cells[j])) map.source = j;
-    else if (isContactCol(cells[j])) map.contact = j;
-    else if (isDescCol(cells[j])) map.description = j;
-    else if (isRefCol(cells[j])) map.reference = j;
+    if (usedIdxs.has(j)) continue;
+    const c = cells[j];
+    if (isSourceCol(c)) map.source = j;
+    else if (isContactCol(c)) map.contact = j;
+    else if (isDescCol(c)) map.description = j;
+    else if (isRefCol(c)) map.reference = j;
   }
 
   return map;
 }
+
+// ── Account header detection ──
+
+// Format A: "620 - Prepayments", "Account: 620 - Prepayments"
+const CODED_ACCOUNT_RE = /^(?:Account:?\s*)?(\d{2,5})\s*[-–—]\s*(.+)$/;
+
+// Rows to skip (never treat as account headers)
+const SKIP_PREFIXES = [
+  "total",
+  "opening balance",
+  "closing balance",
+  "net movement",
+];
+
+/**
+ * Check if a row is an account section header.
+ * Returns { code, name } or null.
+ *
+ * An account header row has text only in the first cell.
+ */
+function detectAccountHeader(
+  row: unknown[]
+): { code: string; name: string } | null {
+  if (!row || row.length === 0) return null;
+
+  const firstCell = String(row[0] ?? "").trim();
+  if (!firstCell) return null;
+
+  // Must not be a date
+  if (parseDate(row[0])) return null;
+
+  const lower = firstCell.toLowerCase();
+
+  // Must not be a skip keyword
+  for (const prefix of SKIP_PREFIXES) {
+    if (lower.startsWith(prefix)) return null;
+  }
+
+  // All other cells must be empty/null (account header = single-cell label row)
+  const otherCellsEmpty = row.slice(1).every((c) => {
+    if (c === null || c === undefined) return true;
+    const s = String(c).trim();
+    return s === "" || s === "0" || s === "null";
+  });
+  if (!otherCellsEmpty) return null;
+
+  // Format A: coded — "620 - Prepayments"
+  const coded = firstCell.match(CODED_ACCOUNT_RE);
+  if (coded) {
+    return { code: coded[1], name: coded[2].trim() };
+  }
+
+  // Format B: name-only — "Accounts Payable"
+  // Use the full name as the code (the DB field is text, not integer)
+  return { code: firstCell, name: firstCell };
+}
+
+// ── Main parser ──
 
 export function parseGLReport(buffer: Buffer): GLParseResult {
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
@@ -129,9 +209,7 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
     defval: null,
   });
 
-  // Phase 1: Scan ALL rows for a header row (not just first 30)
-  // Xero repeats headers under each account section, so the first header
-  // might be well past row 30 in a file with a long preamble.
+  // Phase 1: Find the header row
   let col: ColMap | null = null;
   let headerIdx = -1;
 
@@ -145,9 +223,8 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
   }
 
   if (!col || headerIdx === -1) {
-    // Build a diagnostic preview of the first 15 rows
     const preview = rawRows
-      .slice(0, 15)
+      .slice(0, 20)
       .map(
         (row, i) =>
           `Row ${i}: [${(row || []).map((c) => JSON.stringify(c)).join(", ")}]`
@@ -155,12 +232,11 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
       .join("\n");
 
     throw new Error(
-      `Could not find column headers (looked for a row with 'Date' + 'Debit'/'Credit').\n\nFirst 15 rows:\n${preview}`
+      `Could not find column headers (looked for a row containing 'Date' plus 'Debit'/'Credit').\n\nFirst 20 rows:\n${preview}`
     );
   }
 
-  // Phase 2: Walk rows, detect account headers and transactions.
-  // The header row pattern may repeat per-section — re-detect and skip those.
+  // Phase 2: Walk rows — detect account sections and extract transactions
   const rows: GLRow[] = [];
   let curCode = "";
   let curName = "";
@@ -172,36 +248,39 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
     const row = rawRows[i];
     if (!row) continue;
 
-    // Blank row?
+    // Blank row
     const allEmpty = row.every(
       (c) => c === null || c === undefined || String(c).trim() === ""
     );
     if (allEmpty) continue;
 
     // Skip repeated header rows
-    if (detectHeaders(row)) {
-      continue;
-    }
+    if (detectHeaders(row)) continue;
 
     const firstCell = String(row[0] ?? "").trim();
+    const lower = firstCell.toLowerCase();
 
-    // Account header?
-    const acctMatch = firstCell.match(ACCOUNT_HEADER_RE);
-    if (acctMatch && !parseDate(row[0])) {
-      curCode = acctMatch[1];
-      curName = acctMatch[2].trim();
-      accountSet.add(`${curCode} - ${curName}`);
+    // Skip totals / opening / closing balance rows
+    if (
+      SKIP_PREFIXES.some((p) => lower.startsWith(p))
+    ) {
       continue;
     }
 
-    // Total/summary row?
-    if (firstCell.toLowerCase().startsWith("total")) continue;
+    // Account header?
+    const acct = detectAccountHeader(row);
+    if (acct) {
+      curCode = acct.code;
+      curName = acct.name;
+      accountSet.add(curCode === curName ? curName : `${curCode} - ${curName}`);
+      continue;
+    }
 
     // Transaction row — must have a parseable date
     const dateVal = row[col.date];
     const dateStr = parseDate(dateVal);
     if (!dateStr) continue;
-    if (!curCode) continue; // haven't seen an account header yet
+    if (!curCode) continue; // no account header seen yet
 
     const debit = parseNumber(
       col.debit !== undefined ? row[col.debit] : null
@@ -210,7 +289,7 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
       col.credit !== undefined ? row[col.credit] : null
     );
 
-    // Skip zero-value rows (opening balance lines with no movement)
+    // Skip zero-value rows (e.g. opening balance lines with no movement)
     if (debit === 0 && credit === 0) continue;
 
     rows.push({
@@ -258,7 +337,7 @@ function parseDate(val: unknown): string | null {
   const s = String(val).trim();
   if (!s) return null;
 
-  // ISO: 2026-02-01
+  // ISO datetime: "2025-03-01T00:00:00.000Z" or "2026-02-01"
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
 
   // UK: 01/02/2026 or 1/2/2026
