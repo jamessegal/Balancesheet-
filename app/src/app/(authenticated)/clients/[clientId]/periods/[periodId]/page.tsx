@@ -164,7 +164,12 @@ export default async function PeriodDetailPage({
                       {account.accountCode || "-"}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                      {account.accountName}
+                      <Link
+                        href={`/clients/${clientId}/periods/${periodId}/accounts/${account.id}`}
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        {account.accountName}
+                      </Link>
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                       {account.accountType}

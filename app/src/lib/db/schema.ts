@@ -8,6 +8,9 @@ import {
   integer,
   numeric,
   unique,
+  date,
+  jsonb,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const xeroConnectionStatusEnum = pgEnum("xero_connection_status", [
@@ -36,6 +39,12 @@ export const accountStatusEnum = pgEnum("account_status", [
   "ready_for_review",
   "approved",
   "reopened",
+]);
+
+export const noteTypeEnum = pgEnum("note_type", [
+  "prep",
+  "review",
+  "general",
 ]);
 
 export const users = pgTable("users", {
@@ -147,6 +156,52 @@ export const reconciliationAccounts = pgTable(
 );
 
 // ============================================================
+// TRANSACTIONS, NOTES
+// ============================================================
+
+export const accountTransactions = pgTable(
+  "account_transactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    reconAccountId: uuid("recon_account_id")
+      .notNull()
+      .references(() => reconciliationAccounts.id),
+    xeroLineItemId: text("xero_line_item_id"),
+    xeroJournalId: text("xero_journal_id"),
+    transactionDate: date("transaction_date").notNull(),
+    description: text("description"),
+    reference: text("reference"),
+    contactName: text("contact_name"),
+    debit: numeric("debit", { precision: 18, scale: 2 }).default("0"),
+    credit: numeric("credit", { precision: 18, scale: 2 }).default("0"),
+    sourceType: text("source_type"),
+    rawData: jsonb("raw_data"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_account_transactions_recon").on(table.reconAccountId),
+    index("idx_account_transactions_xero").on(table.xeroJournalId),
+  ]
+);
+
+export const accountNotes = pgTable("account_notes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  reconAccountId: uuid("recon_account_id")
+    .notNull()
+    .references(() => reconciliationAccounts.id),
+  noteType: noteTypeEnum("note_type").notNull(),
+  content: text("content").notNull(),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -160,3 +215,7 @@ export type ReconciliationPeriod = typeof reconciliationPeriods.$inferSelect;
 export type NewReconciliationPeriod = typeof reconciliationPeriods.$inferInsert;
 export type ReconciliationAccount = typeof reconciliationAccounts.$inferSelect;
 export type NewReconciliationAccount = typeof reconciliationAccounts.$inferInsert;
+export type AccountTransaction = typeof accountTransactions.$inferSelect;
+export type NewAccountTransaction = typeof accountTransactions.$inferInsert;
+export type AccountNote = typeof accountNotes.$inferSelect;
+export type NewAccountNote = typeof accountNotes.$inferInsert;
