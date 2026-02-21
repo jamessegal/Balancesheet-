@@ -26,8 +26,10 @@ interface XeroTenant {
 
 export async function GET(request: NextRequest) {
   const session = await auth();
+  const baseUrl = process.env.APP_URL || `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+
   if (!session?.user) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(new URL("/login", baseUrl));
   }
 
   const code = request.nextUrl.searchParams.get("code");
@@ -37,13 +39,13 @@ export async function GET(request: NextRequest) {
   if (error) {
     console.error("Xero OAuth error:", error);
     return NextResponse.redirect(
-      new URL("/clients?error=xero_denied", request.url)
+      new URL("/clients?error=xero_denied", baseUrl)
     );
   }
 
   if (!code || !state) {
     return NextResponse.redirect(
-      new URL("/clients?error=xero_invalid", request.url)
+      new URL("/clients?error=xero_invalid", baseUrl)
     );
   }
 
@@ -54,13 +56,12 @@ export async function GET(request: NextRequest) {
   const storedCsrf = request.cookies.get("xero_csrf")?.value;
   if (!storedCsrf || storedCsrf !== csrfToken) {
     return NextResponse.redirect(
-      new URL("/clients?error=xero_csrf", request.url)
+      new URL(`/clients?error=xero_csrf`, baseUrl)
     );
   }
 
   const xeroClientId = process.env.XERO_CLIENT_ID!;
   const xeroClientSecret = process.env.XERO_CLIENT_SECRET!;
-  const baseUrl = process.env.APP_URL || `${request.nextUrl.protocol}//${request.nextUrl.host}`;
   const redirectUri = `${baseUrl}/api/xero/callback`;
 
   // Exchange code for tokens
@@ -80,8 +81,9 @@ export async function GET(request: NextRequest) {
   if (!tokenResponse.ok) {
     const body = await tokenResponse.text();
     console.error("Xero token exchange failed:", tokenResponse.status, body);
+    console.error("Redirect URI used:", redirectUri);
     return NextResponse.redirect(
-      new URL(`/clients/${clientId}?error=xero_token_failed`, request.url)
+      new URL(`/clients/${clientId}?error=xero_token_failed`, baseUrl)
     );
   }
 
@@ -98,7 +100,7 @@ export async function GET(request: NextRequest) {
   if (!connectionsResponse.ok) {
     console.error("Failed to get Xero connections:", connectionsResponse.status);
     return NextResponse.redirect(
-      new URL(`/clients/${clientId}?error=xero_connections_failed`, request.url)
+      new URL(`/clients/${clientId}?error=xero_connections_failed`, baseUrl)
     );
   }
 
@@ -106,7 +108,7 @@ export async function GET(request: NextRequest) {
 
   if (tenants.length === 0) {
     return NextResponse.redirect(
-      new URL(`/clients/${clientId}?error=xero_no_tenants`, request.url)
+      new URL(`/clients/${clientId}?error=xero_no_tenants`, baseUrl)
     );
   }
 
@@ -147,7 +149,7 @@ export async function GET(request: NextRequest) {
 
   // Clear the CSRF cookie and redirect to client page
   const response = NextResponse.redirect(
-    new URL(`/clients/${clientId}?xero=connected`, request.url)
+    new URL(`/clients/${clientId}?xero=connected`, baseUrl)
   );
   response.cookies.delete("xero_csrf");
 

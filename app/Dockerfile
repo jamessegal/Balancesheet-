@@ -14,6 +14,7 @@ COPY . .
 RUN pnpm build
 
 EXPOSE 3000
+ENV NODE_ENV=production
 ENV PORT=3000
 
 # Push DB schema then start the server
