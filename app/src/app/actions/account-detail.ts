@@ -225,7 +225,12 @@ export async function pullTransactions(accountId: string) {
 
   try {
     // Fetch journals and filter for this account
+    // Rate limit: max ~50 calls/min to stay under Xero's 60/min limit
     let offset = 0;
+    let apiCalls = 0;
+    const MAX_API_CALLS = 40; // Safety cap
+    const DELAY_MS = 1200; // 1.2s between calls = ~50/min
+
     const allLines: {
       journalLineId: string;
       journalId: string;
@@ -238,9 +243,23 @@ export async function pullTransactions(accountId: string) {
       rawData: unknown;
     }[] = [];
 
-    // Xero journals API paginates with offset
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    // Xero journals API paginates with offset (journal number)
     let hasMore = true;
     while (hasMore) {
+      if (apiCalls >= MAX_API_CALLS) {
+        console.log(`Xero: Hit API call cap (${MAX_API_CALLS}), stopping pagination`);
+        break;
+      }
+
+      if (apiCalls > 0) {
+        await sleep(DELAY_MS);
+      }
+
+      apiCalls++;
+      console.log(`Xero: Fetching journals page ${apiCalls}, offset=${offset}`);
+
       const data = await xeroGet<XeroJournalsResponse>(
         connection.id,
         connection.xeroTenantId,
@@ -286,6 +305,8 @@ export async function pullTransactions(accountId: string) {
 
       offset = data.Journals[data.Journals.length - 1].JournalNumber;
     }
+
+    console.log(`Xero: Completed with ${apiCalls} API calls, found ${allLines.length} transactions`);
 
     // Clear existing transactions for this account and insert new ones
     await db
