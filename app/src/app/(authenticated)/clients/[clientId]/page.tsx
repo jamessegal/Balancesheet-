@@ -1,5 +1,10 @@
 import { db } from "@/lib/db";
-import { clients, users, reconciliationPeriods } from "@/lib/db/schema";
+import {
+  clients,
+  users,
+  reconciliationPeriods,
+  glUploads,
+} from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
@@ -7,6 +12,7 @@ import { hasMinRole } from "@/lib/authorization";
 import { getXeroConnection, disconnectXero } from "@/app/actions/xero";
 import { createPeriod } from "@/app/actions/periods";
 import { XeroAccountsPanel } from "@/components/xero-accounts";
+import { GLUploadForm } from "@/components/gl-upload";
 import Link from "next/link";
 
 export default async function ClientDetailPage({
@@ -45,6 +51,34 @@ export default async function ClientDetailPage({
   }
 
   const xeroConnection = await getXeroConnection(clientId);
+
+  // Latest GL upload info
+  let latestUpload: {
+    fileName: string;
+    rowCount: number;
+    accountCount: number;
+    dateFrom: string | null;
+    dateTo: string | null;
+    createdAt: Date;
+  } | null = null;
+  try {
+    const [upload] = await db
+      .select({
+        fileName: glUploads.fileName,
+        rowCount: glUploads.rowCount,
+        accountCount: glUploads.accountCount,
+        dateFrom: glUploads.dateFrom,
+        dateTo: glUploads.dateTo,
+        createdAt: glUploads.createdAt,
+      })
+      .from(glUploads)
+      .where(eq(glUploads.clientId, clientId))
+      .orderBy(desc(glUploads.createdAt))
+      .limit(1);
+    latestUpload = upload ?? null;
+  } catch {
+    // Table doesn't exist yet
+  }
 
   return (
     <div>
@@ -217,6 +251,47 @@ export default async function ClientDetailPage({
           )}
         </div>
       </div>
+
+      {/* General Ledger Upload */}
+      {isManager && (
+        <div className="mt-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-medium">General Ledger Data</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Upload a Xero General Ledger (Detailed) export for historical transaction data.
+              </p>
+            </div>
+          </div>
+          {latestUpload && (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4">
+              <div className="flex items-center gap-4 text-sm">
+                <span className="inline-flex items-center gap-1.5 text-green-700">
+                  <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+                  Loaded
+                </span>
+                <span className="text-gray-600">
+                  {latestUpload.fileName}
+                </span>
+                <span className="text-gray-400">
+                  {latestUpload.rowCount.toLocaleString()} transactions
+                </span>
+                <span className="text-gray-400">
+                  {latestUpload.accountCount} accounts
+                </span>
+                {latestUpload.dateFrom && latestUpload.dateTo && (
+                  <span className="text-gray-400">
+                    {latestUpload.dateFrom} to {latestUpload.dateTo}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="mt-4">
+            <GLUploadForm clientId={clientId} />
+          </div>
+        </div>
+      )}
 
       {/* Chart of Accounts — only show when Xero is connected */}
       {xeroConnection?.status === "active" && isManager && (

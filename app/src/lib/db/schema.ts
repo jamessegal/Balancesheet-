@@ -226,6 +226,61 @@ export const accountNotes = pgTable("account_notes", {
 });
 
 // ============================================================
+// GENERAL LEDGER UPLOADS
+// ============================================================
+
+export const glUploads = pgTable("gl_uploads", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  clientId: uuid("client_id")
+    .notNull()
+    .references(() => clients.id),
+  fileName: text("file_name").notNull(),
+  uploadedBy: uuid("uploaded_by")
+    .notNull()
+    .references(() => users.id),
+  rowCount: integer("row_count").notNull().default(0),
+  accountCount: integer("account_count").notNull().default(0),
+  dateFrom: date("date_from"),
+  dateTo: date("date_to"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const glTransactions = pgTable(
+  "gl_transactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    uploadId: uuid("upload_id")
+      .notNull()
+      .references(() => glUploads.id),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    accountCode: text("account_code").notNull(),
+    accountName: text("account_name").notNull(),
+    transactionDate: date("transaction_date").notNull(),
+    source: text("source"),
+    description: text("description"),
+    reference: text("reference"),
+    contact: text("contact"),
+    debit: numeric("debit", { precision: 18, scale: 2 }).default("0"),
+    credit: numeric("credit", { precision: 18, scale: 2 }).default("0"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_gl_transactions_client").on(table.clientId),
+    index("idx_gl_transactions_account").on(table.clientId, table.accountCode),
+    index("idx_gl_transactions_date").on(
+      table.clientId,
+      table.transactionDate
+    ),
+  ]
+);
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -245,3 +300,7 @@ export type AccountNote = typeof accountNotes.$inferSelect;
 export type NewAccountNote = typeof accountNotes.$inferInsert;
 export type ReconciliationItem = typeof reconciliationItems.$inferSelect;
 export type NewReconciliationItem = typeof reconciliationItems.$inferInsert;
+export type GLUpload = typeof glUploads.$inferSelect;
+export type NewGLUpload = typeof glUploads.$inferInsert;
+export type GLTransaction = typeof glTransactions.$inferSelect;
+export type NewGLTransaction = typeof glTransactions.$inferInsert;
