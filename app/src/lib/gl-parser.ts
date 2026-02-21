@@ -1,16 +1,10 @@
 /**
  * Parse a Xero General Ledger (Detailed) Excel report.
  *
- * Xero's GL export has account sections with transaction rows:
- *   "620 - Prepayments"       ← account header
- *   Date | Source | Contact | Description | Reference | Debit | Credit | ...
- *   01/02/2026 | MJ | ... | Prepayment release | ... | | 41.58 | ...
- *   ...
- *   Total 620 - Prepayments   ← skip
- *   (blank)                    ← skip
- *   "485 - Software"           ← next account header
- *
- * The parser auto-detects column positions from the header row.
+ * Handles multiple Xero GL export formats:
+ *  - Global header row at the top + account sections below
+ *  - Per-account-section header rows (headers repeated under each account)
+ *  - Various column name conventions (Date/date, Debit/Dr, Credit/Cr, etc.)
  */
 import * as XLSX from "xlsx";
 
@@ -34,21 +28,96 @@ export interface GLParseResult {
   accounts: string[]; // "620 - Prepayments", etc.
 }
 
-// Account header pattern: "620 - Prepayments" or "620 – Prepayments"
-const ACCOUNT_HEADER_RE = /^(\d{2,4})\s*[-–—]\s*(.+)$/;
+// Account header patterns:
+//   "620 - Prepayments"
+//   "620 – Prepayments (Revenue)"
+//   "Account: 620 - Prepayments"
+const ACCOUNT_HEADER_RE = /^(?:Account:?\s*)?(\d{2,5})\s*[-–—]\s*(.+)$/;
 
-// Column name aliases
-const DATE_ALIASES = ["date"];
-const SOURCE_ALIASES = ["source", "type"];
-const CONTACT_ALIASES = ["contact", "name", "contact name"];
-const DESC_ALIASES = ["description", "details", "particular", "particulars"];
-const REF_ALIASES = ["reference", "ref", "ref."];
-const DEBIT_ALIASES = ["debit"];
-const CREDIT_ALIASES = ["credit"];
+// Column name matching — case insensitive, trimmed
+function isDateCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return l === "date" || l === "trans date" || l === "transaction date";
+}
+function isSourceCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return l === "source" || l === "type" || l === "source type";
+}
+function isContactCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return (
+    l === "contact" ||
+    l === "name" ||
+    l === "contact name" ||
+    l === "payee"
+  );
+}
+function isDescCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return (
+    l === "description" ||
+    l === "details" ||
+    l === "particular" ||
+    l === "particulars" ||
+    l === "memo" ||
+    l === "narration"
+  );
+}
+function isRefCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return l === "reference" || l === "ref" || l === "ref." || l === "invoice number";
+}
+function isDebitCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return l === "debit" || l === "dr" || l === "dr.";
+}
+function isCreditCol(s: string): boolean {
+  const l = s.toLowerCase().trim();
+  return l === "credit" || l === "cr" || l === "cr.";
+}
 
-function matchAlias(cell: string, aliases: string[]): boolean {
-  const lower = cell.toLowerCase().trim();
-  return aliases.includes(lower);
+interface ColMap {
+  date: number;
+  source?: number;
+  contact?: number;
+  description?: number;
+  reference?: number;
+  debit?: number;
+  credit?: number;
+}
+
+/** Try to detect column headers from a single row. Returns null if not a header row. */
+function detectHeaders(row: unknown[]): ColMap | null {
+  if (!row || row.length < 3) return null;
+
+  const cells = row.map((c) => String(c ?? "").trim());
+
+  let dateIdx = -1;
+  let debitIdx = -1;
+  let creditIdx = -1;
+
+  for (let j = 0; j < cells.length; j++) {
+    if (isDateCol(cells[j])) dateIdx = j;
+    if (isDebitCol(cells[j])) debitIdx = j;
+    if (isCreditCol(cells[j])) creditIdx = j;
+  }
+
+  // Need at least Date + one of Debit/Credit
+  if (dateIdx === -1 || (debitIdx === -1 && creditIdx === -1)) return null;
+
+  const map: ColMap = { date: dateIdx };
+  if (debitIdx !== -1) map.debit = debitIdx;
+  if (creditIdx !== -1) map.credit = creditIdx;
+
+  for (let j = 0; j < cells.length; j++) {
+    if (j === dateIdx || j === debitIdx || j === creditIdx) continue;
+    if (isSourceCol(cells[j])) map.source = j;
+    else if (isContactCol(cells[j])) map.contact = j;
+    else if (isDescCol(cells[j])) map.description = j;
+    else if (isRefCol(cells[j])) map.reference = j;
+  }
+
+  return map;
 }
 
 export function parseGLReport(buffer: Buffer): GLParseResult {
@@ -60,42 +129,38 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
     defval: null,
   });
 
-  // Step 1: Find column header row
+  // Phase 1: Scan ALL rows for a header row (not just first 30)
+  // Xero repeats headers under each account section, so the first header
+  // might be well past row 30 in a file with a long preamble.
+  let col: ColMap | null = null;
   let headerIdx = -1;
-  const col: Record<string, number> = {};
 
-  for (let i = 0; i < Math.min(rawRows.length, 30); i++) {
-    const row = rawRows[i];
-    if (!row) continue;
-
-    const cells = row.map((c) => String(c ?? ""));
-    const hasDate = cells.some((c) => matchAlias(c, DATE_ALIASES));
-    const hasDebit = cells.some((c) => matchAlias(c, DEBIT_ALIASES));
-    const hasCredit = cells.some((c) => matchAlias(c, CREDIT_ALIASES));
-
-    if (hasDate && (hasDebit || hasCredit)) {
+  for (let i = 0; i < rawRows.length; i++) {
+    const detected = detectHeaders(rawRows[i]);
+    if (detected) {
+      col = detected;
       headerIdx = i;
-      for (let j = 0; j < cells.length; j++) {
-        const c = cells[j];
-        if (matchAlias(c, DATE_ALIASES)) col.date = j;
-        else if (matchAlias(c, SOURCE_ALIASES)) col.source = j;
-        else if (matchAlias(c, CONTACT_ALIASES)) col.contact = j;
-        else if (matchAlias(c, DESC_ALIASES)) col.description = j;
-        else if (matchAlias(c, REF_ALIASES)) col.reference = j;
-        else if (matchAlias(c, DEBIT_ALIASES)) col.debit = j;
-        else if (matchAlias(c, CREDIT_ALIASES)) col.credit = j;
-      }
       break;
     }
   }
 
-  if (headerIdx === -1) {
+  if (!col || headerIdx === -1) {
+    // Build a diagnostic preview of the first 15 rows
+    const preview = rawRows
+      .slice(0, 15)
+      .map(
+        (row, i) =>
+          `Row ${i}: [${(row || []).map((c) => JSON.stringify(c)).join(", ")}]`
+      )
+      .join("\n");
+
     throw new Error(
-      "Could not find column headers. Expected a row with 'Date', 'Debit', and/or 'Credit'."
+      `Could not find column headers (looked for a row with 'Date' + 'Debit'/'Credit').\n\nFirst 15 rows:\n${preview}`
     );
   }
 
-  // Step 2: Walk rows, detect account headers and transactions
+  // Phase 2: Walk rows, detect account headers and transactions.
+  // The header row pattern may repeat per-section — re-detect and skip those.
   const rows: GLRow[] = [];
   let curCode = "";
   let curName = "";
@@ -113,6 +178,11 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
     );
     if (allEmpty) continue;
 
+    // Skip repeated header rows
+    if (detectHeaders(row)) {
+      continue;
+    }
+
     const firstCell = String(row[0] ?? "").trim();
 
     // Account header?
@@ -124,21 +194,23 @@ export function parseGLReport(buffer: Buffer): GLParseResult {
       continue;
     }
 
-    // Total row?
+    // Total/summary row?
     if (firstCell.toLowerCase().startsWith("total")) continue;
 
     // Transaction row — must have a parseable date
-    const dateVal = col.date !== undefined ? row[col.date] : row[0];
+    const dateVal = row[col.date];
     const dateStr = parseDate(dateVal);
     if (!dateStr) continue;
     if (!curCode) continue; // haven't seen an account header yet
 
-    const debit = parseNumber(col.debit !== undefined ? row[col.debit] : null);
+    const debit = parseNumber(
+      col.debit !== undefined ? row[col.debit] : null
+    );
     const credit = parseNumber(
       col.credit !== undefined ? row[col.credit] : null
     );
 
-    // Skip zero-value rows (e.g. opening balance lines with no movement)
+    // Skip zero-value rows (opening balance lines with no movement)
     if (debit === 0 && credit === 0) continue;
 
     rows.push({
@@ -195,12 +267,26 @@ function parseDate(val: unknown): string | null {
     return `${ukMatch[3]}-${ukMatch[2].padStart(2, "0")}-${ukMatch[1].padStart(2, "0")}`;
   }
 
+  // Short UK: 01/02/26
+  const ukShortMatch = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2})$/);
+  if (ukShortMatch) {
+    const yr = parseInt(ukShortMatch[3]);
+    const fullYear = yr >= 50 ? `19${ukShortMatch[3]}` : `20${ukShortMatch[3]}`;
+    return `${fullYear}-${ukShortMatch[2].padStart(2, "0")}-${ukShortMatch[1].padStart(2, "0")}`;
+  }
+
   // Text: 1 Feb 2026, 01 February 2026
-  const textMatch = s.match(/^(\d{1,2})\s+(\w{3,9})\s+(\d{4})$/);
+  const textMatch = s.match(/^(\d{1,2})\s+(\w{3,9})\s+(\d{2,4})$/);
   if (textMatch) {
     const m = monthNum(textMatch[2]);
-    if (m)
-      return `${textMatch[3]}-${m}-${textMatch[1].padStart(2, "0")}`;
+    if (m) {
+      let yr = textMatch[3];
+      if (yr.length === 2) {
+        const n = parseInt(yr);
+        yr = n >= 50 ? `19${yr}` : `20${yr}`;
+      }
+      return `${yr}-${m}-${textMatch[1].padStart(2, "0")}`;
+    }
   }
 
   // Excel serial number (days since 1899-12-30)
@@ -239,6 +325,12 @@ function parseNumber(val: unknown): number {
     .replace(/[,£$€\s]/g, "")
     .trim();
   if (!s || s === "-") return 0;
+  // Handle parentheses for negatives: (500.00) → -500.00
+  const parenMatch = s.match(/^\((.+)\)$/);
+  if (parenMatch) {
+    const n = parseFloat(parenMatch[1]);
+    return isNaN(n) ? 0 : -n;
+  }
   const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
 }
