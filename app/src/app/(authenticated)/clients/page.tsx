@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { clients, users } from "@/lib/db/schema";
+import { clients, users, xeroConnections } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
@@ -21,9 +21,12 @@ export default async function ClientsPage() {
       contactName: clients.contactName,
       createdAt: clients.createdAt,
       createdByName: users.name,
+      xeroStatus: xeroConnections.status,
+      xeroTenantName: xeroConnections.xeroTenantName,
     })
     .from(clients)
     .leftJoin(users, eq(clients.createdBy, users.id))
+    .leftJoin(xeroConnections, eq(clients.id, xeroConnections.clientId))
     .orderBy(clients.name);
 
   return (
@@ -72,6 +75,9 @@ export default async function ClientsPage() {
                   Contact
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Xero
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Created By
                 </th>
               </tr>
@@ -80,10 +86,20 @@ export default async function ClientsPage() {
               {allClients.map((client) => (
                 <tr key={client.id} className="hover:bg-gray-50">
                   <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                    {client.code}
+                    <Link
+                      href={`/clients/${client.id}`}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      {client.code}
+                    </Link>
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
-                    {client.name}
+                    <Link
+                      href={`/clients/${client.id}`}
+                      className="hover:text-blue-600"
+                    >
+                      {client.name}
+                    </Link>
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                     {client.contactName && (
@@ -93,6 +109,26 @@ export default async function ClientsPage() {
                       <span className="block text-xs text-gray-400">
                         {client.contactEmail}
                       </span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm">
+                    {client.xeroStatus ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full ${
+                            client.xeroStatus === "active"
+                              ? "bg-green-500"
+                              : client.xeroStatus === "expired"
+                                ? "bg-yellow-500"
+                                : "bg-red-500"
+                          }`}
+                        />
+                        <span className="text-gray-600 capitalize">
+                          {client.xeroStatus}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">Not connected</span>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">

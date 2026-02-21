@@ -4,8 +4,12 @@ import { NextResponse } from "next/server";
 export default auth((req) => {
   const { pathname } = req.nextUrl;
 
-  // Allow auth routes and login page
-  if (pathname.startsWith("/api/auth") || pathname === "/login") {
+  // Allow auth routes, Xero OAuth routes, and login page
+  if (
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/xero") ||
+    pathname === "/login"
+  ) {
     return NextResponse.next();
   }
 
