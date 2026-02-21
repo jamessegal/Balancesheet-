@@ -7,8 +7,9 @@ import {
   reconciliationItems,
   accountNotes,
   users,
+  glTransactions,
 } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
@@ -74,6 +75,51 @@ export default async function AccountDetailPage({
     .from(accountTransactions)
     .where(eq(accountTransactions.reconAccountId, accountId))
     .orderBy(accountTransactions.transactionDate);
+
+  // GL transactions from uploaded report (preferred over API-pulled data)
+  const periodStart = `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}-01`;
+  const lastDay = new Date(period.periodYear, period.periodMonth, 0).getDate();
+  const periodEnd = `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  let glTxns: {
+    id: string;
+    transactionDate: string;
+    description: string | null;
+    reference: string | null;
+    contact: string | null;
+    source: string | null;
+    debit: string | null;
+    credit: string | null;
+  }[] = [];
+  try {
+    if (account.accountCode) {
+      glTxns = await db
+        .select({
+          id: glTransactions.id,
+          transactionDate: glTransactions.transactionDate,
+          description: glTransactions.description,
+          reference: glTransactions.reference,
+          contact: glTransactions.contact,
+          source: glTransactions.source,
+          debit: glTransactions.debit,
+          credit: glTransactions.credit,
+        })
+        .from(glTransactions)
+        .where(
+          and(
+            eq(glTransactions.clientId, clientId),
+            eq(glTransactions.accountCode, account.accountCode),
+            gte(glTransactions.transactionDate, periodStart),
+            lte(glTransactions.transactionDate, periodEnd)
+          )
+        )
+        .orderBy(glTransactions.transactionDate);
+    }
+  } catch {
+    // GL tables not migrated yet
+  }
+
+  const hasGLData = glTxns.length > 0;
 
   const notes = await db
     .select({
@@ -184,73 +230,145 @@ export default async function AccountDetailPage({
         />
       </div>
 
-      {/* Transactions */}
+      {/* Transactions — GL upload data takes priority over API-pulled data */}
       <div className="mt-8">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">
-            Transactions ({transactions.length})
-          </h2>
-          {isManager && <PullTransactionsButton accountId={accountId} />}
-        </div>
+        {hasGLData ? (
+          <>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-medium">
+                Transactions ({glTxns.length})
+              </h2>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+                From GL upload
+              </span>
+            </div>
 
-        {transactions.length === 0 ? (
-          <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-8 text-center">
-            <p className="text-sm text-gray-500">
-              No transactions yet. Pull from Xero to load transactions for this account.
-            </p>
-          </div>
-        ) : (
-          <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-white">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Date</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Description</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Reference</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Source</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Debit</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Credit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {transactions.map((txn) => (
-                  <tr key={txn.id} className="hover:bg-gray-50">
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
-                      {txn.transactionDate}
+            <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-white">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Contact</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Description</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Reference</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Source</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Debit</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Credit</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {glTxns.map((txn) => (
+                    <tr key={txn.id} className="hover:bg-gray-50">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
+                        {txn.transactionDate}
+                      </td>
+                      <td className="max-w-[10rem] truncate px-4 py-3 text-sm text-gray-900">
+                        {txn.contact || "-"}
+                      </td>
+                      <td className="max-w-xs truncate px-4 py-3 text-sm text-gray-900">
+                        {txn.description || "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                        {txn.reference || "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                        {txn.source || "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-mono text-gray-900">
+                        {parseFloat(txn.debit || "0") > 0 ? formatCurrency(parseFloat(txn.debit!)) : ""}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-mono text-gray-900">
+                        {parseFloat(txn.credit || "0") > 0 ? formatCurrency(parseFloat(txn.credit!)) : ""}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-gray-50">
+                  <tr>
+                    <td colSpan={5} className="px-4 py-3 text-sm font-medium text-gray-900">
+                      Total
                     </td>
-                    <td className="max-w-xs truncate px-4 py-3 text-sm text-gray-900">
-                      {txn.description || "-"}
+                    <td className="px-4 py-3 text-right text-sm font-mono font-medium text-gray-900">
+                      {formatCurrency(glTxns.reduce((s, t) => s + parseFloat(t.debit || "0"), 0))}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
-                      {txn.reference || "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
-                      {txn.sourceType || "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-mono text-gray-900">
-                      {parseFloat(txn.debit || "0") > 0 ? formatCurrency(parseFloat(txn.debit!)) : ""}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-mono text-gray-900">
-                      {parseFloat(txn.credit || "0") > 0 ? formatCurrency(parseFloat(txn.credit!)) : ""}
+                    <td className="px-4 py-3 text-right text-sm font-mono font-medium text-gray-900">
+                      {formatCurrency(glTxns.reduce((s, t) => s + parseFloat(t.credit || "0"), 0))}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-gray-50">
-                <tr>
-                  <td colSpan={4} className="px-4 py-3 text-sm font-medium text-gray-900">
-                    Total
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm font-mono font-medium text-gray-900">
-                    {formatCurrency(transactions.reduce((s, t) => s + parseFloat(t.debit || "0"), 0))}
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm font-mono font-medium text-gray-900">
-                    {formatCurrency(transactions.reduce((s, t) => s + parseFloat(t.credit || "0"), 0))}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+                </tfoot>
+              </table>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-medium">
+                Transactions ({transactions.length})
+              </h2>
+              {isManager && <PullTransactionsButton accountId={accountId} />}
+            </div>
+
+            {transactions.length === 0 ? (
+              <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-8 text-center">
+                <p className="text-sm text-gray-500">
+                  No transactions yet. Upload a GL report on the client page, or pull from Xero API.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-white">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Description</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Reference</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Source</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Debit</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {transactions.map((txn) => (
+                      <tr key={txn.id} className="hover:bg-gray-50">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
+                          {txn.transactionDate}
+                        </td>
+                        <td className="max-w-xs truncate px-4 py-3 text-sm text-gray-900">
+                          {txn.description || "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                          {txn.reference || "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
+                          {txn.sourceType || "-"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-mono text-gray-900">
+                          {parseFloat(txn.debit || "0") > 0 ? formatCurrency(parseFloat(txn.debit!)) : ""}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-mono text-gray-900">
+                          {parseFloat(txn.credit || "0") > 0 ? formatCurrency(parseFloat(txn.credit!)) : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50">
+                    <tr>
+                      <td colSpan={4} className="px-4 py-3 text-sm font-medium text-gray-900">
+                        Total
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-mono font-medium text-gray-900">
+                        {formatCurrency(transactions.reduce((s, t) => s + parseFloat(t.debit || "0"), 0))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-mono font-medium text-gray-900">
+                        {formatCurrency(transactions.reduce((s, t) => s + parseFloat(t.credit || "0"), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </div>
 
