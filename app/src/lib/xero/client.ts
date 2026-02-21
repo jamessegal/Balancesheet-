@@ -91,7 +91,8 @@ export async function getValidAccessToken(connectionId: string): Promise<string>
 export async function xeroGet<T>(
   connectionId: string,
   tenantId: string,
-  path: string
+  path: string,
+  extraHeaders?: Record<string, string>
 ): Promise<T> {
   const accessToken = await getValidAccessToken(connectionId);
 
@@ -100,6 +101,7 @@ export async function xeroGet<T>(
       Authorization: `Bearer ${accessToken}`,
       "Xero-Tenant-Id": tenantId,
       Accept: "application/json",
+      ...extraHeaders,
     },
   });
 

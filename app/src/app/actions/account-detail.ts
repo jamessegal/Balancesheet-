@@ -225,9 +225,9 @@ export async function pullTransactions(accountId: string) {
 
   try {
     // Fetch journals for this account within the period date range.
-    // Xero Journals API only paginates forward by journal number (no date filter),
-    // so we use exponential probing + binary search to jump to the right date range
-    // instead of scanning from journal #0 (which can be thousands of wasted calls).
+    // We use Xero's If-Modified-Since header to only retrieve journals
+    // created/modified recently, then paginate forward filtering by date.
+    // This avoids scanning thousands of old journals.
     let apiCalls = 0;
     const MAX_API_CALLS = 30;
     const DELAY_MS = 1200; // 1.2s between calls = ~50/min
@@ -246,6 +246,12 @@ export async function pullTransactions(accountId: string) {
 
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+    // Set If-Modified-Since to 60 days before period start to catch
+    // journals created in advance for this period
+    const modifiedSince = new Date(period.periodYear, period.periodMonth - 1, 1);
+    modifiedSince.setDate(modifiedSince.getDate() - 60);
+    const modifiedSinceHeader = modifiedSince.toUTCString();
+
     async function fetchPage(offset: number): Promise<XeroJournalsResponse> {
       if (apiCalls > 0) await sleep(DELAY_MS);
       apiCalls++;
@@ -253,12 +259,9 @@ export async function pullTransactions(accountId: string) {
       return xeroGet<XeroJournalsResponse>(
         connection.id,
         connection.xeroTenantId,
-        `/Journals?offset=${offset}&pastPayments=true`
+        `/Journals?offset=${offset}`,
+        { "If-Modified-Since": modifiedSinceHeader }
       );
-    }
-
-    function lastDateOf(journals: XeroJournal[]) {
-      return journals[journals.length - 1].JournalDate.split("T")[0];
     }
 
     function lastNumOf(journals: XeroJournal[]) {
@@ -266,61 +269,13 @@ export async function pullTransactions(accountId: string) {
     }
 
     console.log(`Xero: Searching for journals between ${startDate} and ${endDate}, account ${account.xeroAccountId}`);
+    console.log(`Xero: Using If-Modified-Since: ${modifiedSinceHeader}`);
 
-    // ── Phase 1: Exponential probe to bracket the start date ──
-    // Jump forward by doubling steps until we find journals at/past startDate
-    let low = 0;
-    let high = 0;
-    let step = 100;
-
-    while (apiCalls < MAX_API_CALLS) {
-      const data = await fetchPage(high);
-
-      if (!data.Journals || data.Journals.length === 0) {
-        // Past all journals — bracket is [low, high]
-        console.log(`Xero: No journals at offset=${high}, total range is [0, ${high}]`);
-        break;
-      }
-
-      const batchLastDate = lastDateOf(data.Journals);
-      const batchLastNum = lastNumOf(data.Journals);
-
-      if (batchLastDate >= startDate) {
-        // Found the bracket — journals before `low` are too early,
-        // journals at `high` include our date range
-        console.log(`Xero: Bracketed date range to offsets [${low}, ${high}]`);
-        break;
-      }
-
-      // Everything in this batch is still before our date range, jump further
-      low = batchLastNum;
-      step = Math.min(step * 2, 10000); // double the jump, cap at 10k
-      high = low + step;
-    }
-
-    // ── Phase 2: Binary search to narrow down the start ──
-    // Find the lowest offset where journals have dates >= startDate
-    while (high - low > 100 && apiCalls < MAX_API_CALLS) {
-      const mid = Math.floor((low + high) / 2);
-      const data = await fetchPage(mid);
-
-      if (!data.Journals || data.Journals.length === 0) {
-        high = mid;
-        continue;
-      }
-
-      if (lastDateOf(data.Journals) < startDate) {
-        low = lastNumOf(data.Journals);
-      } else {
-        high = mid;
-      }
-    }
-
-    console.log(`Xero: Narrowed start to offset=${low}, beginning collection`);
-
-    // ── Phase 3: Paginate forward through the date range ──
-    let offset = low;
+    // Paginate forward through journals modified since our cutoff date,
+    // collecting any that fall within our period and match our account.
+    let offset = 0;
     let hasMore = true;
+    let totalJournalsSeen = 0;
     let journalsInRange = 0;
     const seenAccountIds = new Set<string>();
 
@@ -331,10 +286,16 @@ export async function pullTransactions(accountId: string) {
         break;
       }
 
+      totalJournalsSeen += data.Journals.length;
+
       for (const journal of data.Journals) {
         const journalDate = journal.JournalDate.split("T")[0];
 
+        // Skip journals before our date range (they were modified recently
+        // but dated earlier)
         if (journalDate < startDate) continue;
+
+        // Stop if we've gone past our date range
         if (journalDate > endDate) {
           hasMore = false;
           break;
@@ -367,13 +328,17 @@ export async function pullTransactions(accountId: string) {
       offset = lastNumOf(data.Journals);
     }
 
-    console.log(`Xero: Done — ${apiCalls} API calls, ${journalsInRange} journals in date range, found ${allLines.length} matching transactions`);
+    console.log(`Xero: Done — ${apiCalls} API calls, ${totalJournalsSeen} journals scanned, ${journalsInRange} in date range, found ${allLines.length} matching transactions`);
     console.log(`Xero: Looking for account ID: ${account.xeroAccountId}`);
-    console.log(`Xero: Unique account IDs seen in journals: ${seenAccountIds.size}`);
+    if (journalsInRange > 0) {
+      console.log(`Xero: Unique account IDs in range: ${seenAccountIds.size}`);
+    }
     if (allLines.length === 0 && seenAccountIds.size > 0) {
-      // Log a sample of IDs to help diagnose mismatch
       const sample = [...seenAccountIds].slice(0, 10);
       console.log(`Xero: Sample account IDs from journals: ${sample.join(", ")}`);
+    }
+    if (allLines.length === 0 && totalJournalsSeen === 0) {
+      console.log(`Xero: WARNING — No journals returned at all. If-Modified-Since may be filtering everything out.`);
     }
 
     // Clear existing transactions for this account and insert new ones
