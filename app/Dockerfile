@@ -17,5 +17,5 @@ EXPOSE 3000
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Push DB schema then start the server
-CMD pnpm db:push && pnpm start
+# Push DB schema (pipe yes to auto-confirm prompts) then start the server
+CMD yes | pnpm db:push && pnpm start
