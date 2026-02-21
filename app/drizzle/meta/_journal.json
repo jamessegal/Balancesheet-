@@ -15,6 +15,20 @@
       "when": 1740156000000,
       "tag": "0001_add_transactions_and_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1740157000000,
+      "tag": "0002_add_reconciliation_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1740158000000,
+      "tag": "0003_add_gl_tables",
+      "breakpoints": true
     }
   ]
 }
