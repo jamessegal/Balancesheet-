@@ -19,12 +19,16 @@ interface Props {
   accountId: string;
   items: ReconciliationItemRow[];
   closingBalance: number;
+  bfTotal?: number;
+  movement?: number | null;
 }
 
 export function ReconciliationSchedule({
   accountId,
   items,
   closingBalance,
+  bfTotal = 0,
+  movement = null,
 }: Props) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -163,7 +167,38 @@ export function ReconciliationSchedule({
                 </td>
                 <td />
               </tr>
-              <tr>
+              {(bfTotal !== 0 || movement !== null) && (
+                <>
+                  <tr className="border-t border-gray-200">
+                    <td className="px-4 py-3 text-xs font-medium text-gray-500">
+                      Brought Forward
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs font-mono text-gray-500">
+                      {formatCurrency(bfTotal)}
+                    </td>
+                    <td />
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-3 text-xs font-medium text-gray-500">
+                      + Movement
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs font-mono text-gray-500">
+                      {formatCurrency(movement ?? 0)}
+                    </td>
+                    <td />
+                  </tr>
+                  <tr className="border-t border-gray-200">
+                    <td className="px-4 py-3 text-xs font-medium text-gray-500">
+                      = Expected Closing
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs font-mono text-gray-500">
+                      {formatCurrency(bfTotal + (movement ?? 0))}
+                    </td>
+                    <td />
+                  </tr>
+                </>
+              )}
+              <tr className="border-t border-gray-300">
                 <td className="px-4 py-3 text-sm font-medium text-gray-900">
                   Balance per BS
                 </td>

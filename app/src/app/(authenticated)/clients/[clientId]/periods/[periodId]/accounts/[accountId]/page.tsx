@@ -160,6 +160,61 @@ export default async function AccountDetailPage({
     // Table doesn't exist yet — show empty schedule
   }
 
+  // Brought-forward: load prior period's reconciliation items for this account
+  let priorReconItems: {
+    id: string;
+    description: string;
+    amount: string;
+  }[] = [];
+  try {
+    const priorMonth = period.periodMonth === 1 ? 12 : period.periodMonth - 1;
+    const priorYear = period.periodMonth === 1 ? period.periodYear - 1 : period.periodYear;
+
+    const [priorPeriod] = await db
+      .select()
+      .from(reconciliationPeriods)
+      .where(
+        and(
+          eq(reconciliationPeriods.clientId, clientId),
+          eq(reconciliationPeriods.periodYear, priorYear),
+          eq(reconciliationPeriods.periodMonth, priorMonth)
+        )
+      )
+      .limit(1);
+
+    if (priorPeriod) {
+      const [priorAccount] = await db
+        .select()
+        .from(reconciliationAccounts)
+        .where(
+          and(
+            eq(reconciliationAccounts.periodId, priorPeriod.id),
+            eq(reconciliationAccounts.xeroAccountId, account.xeroAccountId)
+          )
+        )
+        .limit(1);
+
+      if (priorAccount) {
+        priorReconItems = await db
+          .select({
+            id: reconciliationItems.id,
+            description: reconciliationItems.description,
+            amount: reconciliationItems.amount,
+          })
+          .from(reconciliationItems)
+          .where(eq(reconciliationItems.reconAccountId, priorAccount.id))
+          .orderBy(reconciliationItems.createdAt);
+      }
+    }
+  } catch {
+    // Prior period may not exist yet
+  }
+
+  const bfTotal = priorReconItems.reduce(
+    (sum, item) => sum + parseFloat(item.amount || "0"),
+    0
+  );
+
   const periodLabel = `${MONTH_NAMES[period.periodMonth - 1]} ${period.periodYear}`;
   const badge = STATUS_BADGES[account.status] || STATUS_BADGES.draft;
   const balance = parseFloat(account.balance);
@@ -229,6 +284,59 @@ export default async function AccountDetailPage({
           currentStatus={account.status}
           isManager={isManager}
         />
+      </div>
+
+      {/* Brought Forward Reconciliation */}
+      <div className="mt-8">
+        <h2 className="text-lg font-medium">Brought Forward Reconciliation</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Reconciling items carried forward from the prior period.
+        </p>
+
+        {priorReconItems.length > 0 ? (
+          <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Description
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Amount
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {priorReconItems.map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {item.description}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-mono text-gray-900">
+                      {formatCurrency(parseFloat(item.amount))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50">
+                <tr className="border-t-2 border-gray-300">
+                  <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                    Brought Forward Total
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm font-mono font-medium text-gray-900">
+                    {formatCurrency(bfTotal)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-6 text-center">
+            <p className="text-sm text-gray-500">
+              No prior period reconciliation found.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Transactions — GL upload data takes priority over API-pulled data */}
@@ -373,9 +481,9 @@ export default async function AccountDetailPage({
         )}
       </div>
 
-      {/* Reconciliation Schedule */}
+      {/* Closing Reconciliation */}
       <div className="mt-8">
-        <h2 className="text-lg font-medium">Reconciliation Schedule</h2>
+        <h2 className="text-lg font-medium">Closing Reconciliation</h2>
         <p className="mt-1 text-sm text-gray-500">
           List the items that make up the closing balance. Variance should be zero.
         </p>
@@ -384,6 +492,8 @@ export default async function AccountDetailPage({
             accountId={accountId}
             items={reconItems}
             closingBalance={balance}
+            bfTotal={bfTotal}
+            movement={movement}
           />
         </div>
       </div>
