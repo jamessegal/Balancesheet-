@@ -25,8 +25,17 @@ CREATE TABLE IF NOT EXISTS "account_notes" (
 	"created_by" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );--> statement-breakpoint
-ALTER TABLE "account_transactions" ADD CONSTRAINT "account_transactions_recon_account_id_reconciliation_accounts_id_fk" FOREIGN KEY ("recon_account_id") REFERENCES "public"."reconciliation_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "account_notes" ADD CONSTRAINT "account_notes_recon_account_id_reconciliation_accounts_id_fk" FOREIGN KEY ("recon_account_id") REFERENCES "public"."reconciliation_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "account_notes" ADD CONSTRAINT "account_notes_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "account_transactions" ADD CONSTRAINT "account_transactions_recon_account_id_reconciliation_accounts_id_fk" FOREIGN KEY ("recon_account_id") REFERENCES "public"."reconciliation_accounts"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "account_notes" ADD CONSTRAINT "account_notes_recon_account_id_reconciliation_accounts_id_fk" FOREIGN KEY ("recon_account_id") REFERENCES "public"."reconciliation_accounts"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "account_notes" ADD CONSTRAINT "account_notes_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "idx_account_transactions_recon" ON "account_transactions" USING btree ("recon_account_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "idx_account_transactions_xero" ON "account_transactions" USING btree ("xero_journal_id");

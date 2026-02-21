@@ -35,8 +35,23 @@ CREATE TABLE IF NOT EXISTS "reconciliation_accounts" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "reconciliation_accounts_period_id_xero_account_id_unique" UNIQUE("period_id","xero_account_id")
 );--> statement-breakpoint
-ALTER TABLE "reconciliation_periods" ADD CONSTRAINT "reconciliation_periods_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reconciliation_periods" ADD CONSTRAINT "reconciliation_periods_opened_by_users_id_fk" FOREIGN KEY ("opened_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reconciliation_accounts" ADD CONSTRAINT "reconciliation_accounts_period_id_reconciliation_periods_id_fk" FOREIGN KEY ("period_id") REFERENCES "public"."reconciliation_periods"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reconciliation_accounts" ADD CONSTRAINT "reconciliation_accounts_prepared_by_users_id_fk" FOREIGN KEY ("prepared_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reconciliation_accounts" ADD CONSTRAINT "reconciliation_accounts_approved_by_users_id_fk" FOREIGN KEY ("approved_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+DO $$ BEGIN
+  ALTER TABLE "reconciliation_periods" ADD CONSTRAINT "reconciliation_periods_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "reconciliation_periods" ADD CONSTRAINT "reconciliation_periods_opened_by_users_id_fk" FOREIGN KEY ("opened_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "reconciliation_accounts" ADD CONSTRAINT "reconciliation_accounts_period_id_reconciliation_periods_id_fk" FOREIGN KEY ("period_id") REFERENCES "public"."reconciliation_periods"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "reconciliation_accounts" ADD CONSTRAINT "reconciliation_accounts_prepared_by_users_id_fk" FOREIGN KEY ("prepared_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "reconciliation_accounts" ADD CONSTRAINT "reconciliation_accounts_approved_by_users_id_fk" FOREIGN KEY ("approved_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
