@@ -321,6 +321,8 @@ export async function pullTransactions(accountId: string) {
     // ── Phase 3: Paginate forward through the date range ──
     let offset = low;
     let hasMore = true;
+    let journalsInRange = 0;
+    const seenAccountIds = new Set<string>();
 
     while (hasMore && apiCalls < MAX_API_CALLS) {
       const data = await fetchPage(offset);
@@ -338,7 +340,13 @@ export async function pullTransactions(accountId: string) {
           break;
         }
 
+        journalsInRange++;
         for (const line of journal.JournalLines) {
+          // Collect unique account IDs for diagnostics (first 200 journals only)
+          if (journalsInRange <= 200) {
+            seenAccountIds.add(line.AccountID);
+          }
+
           if (line.AccountID === account.xeroAccountId) {
             const amount = line.NetAmount || 0;
             allLines.push({
@@ -359,7 +367,14 @@ export async function pullTransactions(accountId: string) {
       offset = lastNumOf(data.Journals);
     }
 
-    console.log(`Xero: Done — ${apiCalls} API calls, found ${allLines.length} transactions`);
+    console.log(`Xero: Done — ${apiCalls} API calls, ${journalsInRange} journals in date range, found ${allLines.length} matching transactions`);
+    console.log(`Xero: Looking for account ID: ${account.xeroAccountId}`);
+    console.log(`Xero: Unique account IDs seen in journals: ${seenAccountIds.size}`);
+    if (allLines.length === 0 && seenAccountIds.size > 0) {
+      // Log a sample of IDs to help diagnose mismatch
+      const sample = [...seenAccountIds].slice(0, 10);
+      console.log(`Xero: Sample account IDs from journals: ${sample.join(", ")}`);
+    }
 
     // Clear existing transactions for this account and insert new ones
     await db
