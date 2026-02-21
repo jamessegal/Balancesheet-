@@ -1,10 +1,11 @@
 import { db } from "@/lib/db";
-import { clients, users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { clients, users, reconciliationPeriods } from "@/lib/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
 import { getXeroConnection, disconnectXero } from "@/app/actions/xero";
+import { createPeriod } from "@/app/actions/periods";
 import { XeroAccountsPanel } from "@/components/xero-accounts";
 import Link from "next/link";
 
@@ -220,6 +221,134 @@ export default async function ClientDetailPage({
       {/* Chart of Accounts — only show when Xero is connected */}
       {xeroConnection?.status === "active" && isManager && (
         <XeroAccountsPanel clientId={clientId} />
+      )}
+
+      {/* Reconciliation Periods */}
+      {xeroConnection?.status === "active" && (
+        <PeriodsSection clientId={clientId} isManager={isManager} />
+      )}
+    </div>
+  );
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+const STATUS_BADGES: Record<string, { label: string; className: string }> = {
+  draft: { label: "Draft", className: "bg-gray-100 text-gray-700" },
+  in_progress: { label: "In Progress", className: "bg-blue-100 text-blue-700" },
+  ready_for_review: { label: "Ready for Review", className: "bg-yellow-100 text-yellow-700" },
+  approved: { label: "Approved", className: "bg-green-100 text-green-700" },
+  reopened: { label: "Reopened", className: "bg-red-100 text-red-700" },
+};
+
+async function PeriodsSection({
+  clientId,
+  isManager,
+}: {
+  clientId: string;
+  isManager: boolean;
+}) {
+  const periods = await db
+    .select()
+    .from(reconciliationPeriods)
+    .where(eq(reconciliationPeriods.clientId, clientId))
+    .orderBy(
+      desc(reconciliationPeriods.periodYear),
+      desc(reconciliationPeriods.periodMonth)
+    );
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-medium">Reconciliation Periods</h2>
+        {isManager && (
+          <form
+            action={async (formData: FormData) => {
+              "use server";
+              await createPeriod(formData);
+            }}
+          >
+            <input type="hidden" name="clientId" value={clientId} />
+            <input type="hidden" name="year" value={currentYear} />
+            <input type="hidden" name="month" value={currentMonth} />
+            <button
+              type="submit"
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Open {MONTH_NAMES[currentMonth - 1]} {currentYear}
+            </button>
+          </form>
+        )}
+      </div>
+
+      {periods.length === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-8 text-center">
+          <p className="text-sm text-gray-500">
+            No reconciliation periods yet. Open a period to get started.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 bg-white">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Period
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Opened
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {periods.map((period) => {
+                const badge = STATUS_BADGES[period.status] || STATUS_BADGES.draft;
+                return (
+                  <tr key={period.id} className="hover:bg-gray-50">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                      <Link
+                        href={`/clients/${clientId}/periods/${period.id}`}
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        {MONTH_NAMES[period.periodMonth - 1]} {period.periodYear}
+                      </Link>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${badge.className}`}
+                      >
+                        {badge.label}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                      {new Date(period.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
+                      <Link
+                        href={`/clients/${clientId}/periods/${period.id}`}
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
