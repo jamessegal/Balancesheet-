@@ -8,8 +8,10 @@ const SCOPES = [
   "profile",
   "email",
   "accounting.transactions.read",
+  "accounting.reports.read",
   "accounting.contacts.read",
   "accounting.settings.read",
+  "accounting.journals.read",
   "offline_access",
 ].join(" ");
 
