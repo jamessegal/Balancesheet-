@@ -1,5 +1,5 @@
 #!/bin/sh
-echo "=== Pushing database schema ==="
-yes | pnpm db:push 2>&1 || echo "Warning: db:push failed, continuing..."
+echo "=== Running database migrations ==="
+pnpm db:migrate 2>&1 || echo "Warning: db:migrate failed, continuing..."
 echo "=== Starting server ==="
 exec pnpm start
