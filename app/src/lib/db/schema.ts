@@ -156,7 +156,7 @@ export const reconciliationAccounts = pgTable(
 );
 
 // ============================================================
-// TRANSACTIONS, NOTES
+// TRANSACTIONS, NOTES, RECONCILIATION ITEMS
 // ============================================================
 
 export const accountTransactions = pgTable(
@@ -183,6 +183,30 @@ export const accountTransactions = pgTable(
   (table) => [
     index("idx_account_transactions_recon").on(table.reconAccountId),
     index("idx_account_transactions_xero").on(table.xeroJournalId),
+  ]
+);
+
+export const reconciliationItems = pgTable(
+  "reconciliation_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    reconAccountId: uuid("recon_account_id")
+      .notNull()
+      .references(() => reconciliationAccounts.id),
+    description: text("description").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_reconciliation_items_recon").on(table.reconAccountId),
   ]
 );
 
@@ -219,3 +243,5 @@ export type AccountTransaction = typeof accountTransactions.$inferSelect;
 export type NewAccountTransaction = typeof accountTransactions.$inferInsert;
 export type AccountNote = typeof accountNotes.$inferSelect;
 export type NewAccountNote = typeof accountNotes.$inferInsert;
+export type ReconciliationItem = typeof reconciliationItems.$inferSelect;
+export type NewReconciliationItem = typeof reconciliationItems.$inferInsert;

@@ -6,6 +6,7 @@ import {
   reconciliationPeriods,
   accountTransactions,
   accountNotes,
+  reconciliationItems,
   xeroConnections,
   users,
 } from "@/lib/db/schema";
@@ -529,4 +530,96 @@ export async function pullTransactions(accountId: string) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return { error: `Failed to pull transactions: ${message}` };
   }
+}
+
+// ------------------------------------------------------------------
+// Reconciliation Items — manual schedule items that explain a balance
+// ------------------------------------------------------------------
+
+export async function addReconciliationItem(formData: FormData) {
+  const session = await requireRole("junior");
+
+  const accountId = formData.get("accountId") as string;
+  const description = (formData.get("description") as string)?.trim();
+  const amountStr = (formData.get("amount") as string)?.trim();
+
+  if (!accountId || !description || !amountStr) {
+    return { error: "Description and amount are required" };
+  }
+
+  const amount = parseFloat(amountStr);
+  if (isNaN(amount)) {
+    return { error: "Amount must be a valid number" };
+  }
+
+  const [account] = await db
+    .select()
+    .from(reconciliationAccounts)
+    .where(eq(reconciliationAccounts.id, accountId))
+    .limit(1);
+
+  if (!account) {
+    return { error: "Account not found" };
+  }
+
+  await db.insert(reconciliationItems).values({
+    reconAccountId: accountId,
+    description,
+    amount: String(amount),
+    createdBy: session.user.id,
+  });
+
+  const [period] = await db
+    .select()
+    .from(reconciliationPeriods)
+    .where(eq(reconciliationPeriods.id, account.periodId))
+    .limit(1);
+
+  if (period) {
+    revalidatePath(
+      `/clients/${period.clientId}/periods/${period.id}/accounts/${accountId}`
+    );
+  }
+
+  return { success: true };
+}
+
+export async function deleteReconciliationItem(itemId: string) {
+  await requireRole("junior");
+
+  const [item] = await db
+    .select()
+    .from(reconciliationItems)
+    .where(eq(reconciliationItems.id, itemId))
+    .limit(1);
+
+  if (!item) {
+    return { error: "Item not found" };
+  }
+
+  await db
+    .delete(reconciliationItems)
+    .where(eq(reconciliationItems.id, itemId));
+
+  const [account] = await db
+    .select()
+    .from(reconciliationAccounts)
+    .where(eq(reconciliationAccounts.id, item.reconAccountId))
+    .limit(1);
+
+  if (account) {
+    const [period] = await db
+      .select()
+      .from(reconciliationPeriods)
+      .where(eq(reconciliationPeriods.id, account.periodId))
+      .limit(1);
+
+    if (period) {
+      revalidatePath(
+        `/clients/${period.clientId}/periods/${period.id}/accounts/${account.id}`
+      );
+    }
+  }
+
+  return { success: true };
 }

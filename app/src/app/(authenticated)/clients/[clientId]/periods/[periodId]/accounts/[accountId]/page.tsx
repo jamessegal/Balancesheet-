@@ -4,6 +4,7 @@ import {
   reconciliationPeriods,
   reconciliationAccounts,
   accountTransactions,
+  reconciliationItems,
   accountNotes,
   users,
 } from "@/lib/db/schema";
@@ -15,6 +16,7 @@ import Link from "next/link";
 import { AccountStatusControl } from "@/components/account-status";
 import { PullTransactionsButton } from "@/components/pull-transactions";
 import { AddNoteForm } from "@/components/add-note";
+import { ReconciliationSchedule } from "@/components/reconciliation-schedule";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -85,6 +87,19 @@ export default async function AccountDetailPage({
     .leftJoin(users, eq(accountNotes.createdBy, users.id))
     .where(eq(accountNotes.reconAccountId, accountId))
     .orderBy(desc(accountNotes.createdAt));
+
+  const reconItems = await db
+    .select({
+      id: reconciliationItems.id,
+      description: reconciliationItems.description,
+      amount: reconciliationItems.amount,
+      createdAt: reconciliationItems.createdAt,
+      createdByName: users.name,
+    })
+    .from(reconciliationItems)
+    .leftJoin(users, eq(reconciliationItems.createdBy, users.id))
+    .where(eq(reconciliationItems.reconAccountId, accountId))
+    .orderBy(reconciliationItems.createdAt);
 
   const periodLabel = `${MONTH_NAMES[period.periodMonth - 1]} ${period.periodYear}`;
   const badge = STATUS_BADGES[account.status] || STATUS_BADGES.draft;
@@ -225,6 +240,21 @@ export default async function AccountDetailPage({
             </table>
           </div>
         )}
+      </div>
+
+      {/* Reconciliation Schedule */}
+      <div className="mt-8">
+        <h2 className="text-lg font-medium">Reconciliation Schedule</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          List the items that make up the closing balance. Variance should be zero.
+        </p>
+        <div className="mt-4">
+          <ReconciliationSchedule
+            accountId={accountId}
+            items={reconItems}
+            closingBalance={balance}
+          />
+        </div>
       </div>
 
       {/* Notes */}
