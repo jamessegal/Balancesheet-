@@ -318,6 +318,18 @@ export async function pullTransactions(accountId: string) {
 
     const allLines: TransactionLine[] = [];
 
+    // ── Helper: parse Xero date formats ──
+    // Xero returns dates as either "/Date(ms+tz)/" (.NET) or ISO strings
+    function parseXeroDate(raw: string): string {
+      const msMatch = raw.match(/\/Date\((\d+)([+-]\d{4})?\)\//);
+      if (msMatch) {
+        const d = new Date(Number(msMatch[1]));
+        return d.toISOString().split("T")[0];
+      }
+      // ISO format fallback
+      return raw.split("T")[0];
+    }
+
     // ── Helper: paginate a Xero endpoint ──
     async function fetchAllPages<T>(
       basePath: string,
@@ -345,7 +357,7 @@ export async function pullTransactions(accountId: string) {
 
     for (const txn of bankTxns) {
       if (txn.Status === "DELETED") continue;
-      const txnDate = txn.Date.split("T")[0];
+      const txnDate = parseXeroDate(txn.Date);
 
       for (const line of txn.LineItems || []) {
         if (line.AccountCode === accountCode) {
@@ -381,7 +393,7 @@ export async function pullTransactions(accountId: string) {
 
     for (const mj of manualJournals) {
       if (mj.Status === "VOIDED") continue;
-      const mjDate = mj.Date.split("T")[0];
+      const mjDate = parseXeroDate(mj.Date);
 
       for (const line of mj.JournalLines || []) {
         if (line.AccountCode === accountCode) {
@@ -414,7 +426,7 @@ export async function pullTransactions(accountId: string) {
 
     for (const inv of invoices) {
       if (inv.Status === "DELETED" || inv.Status === "VOIDED") continue;
-      const invDate = inv.Date.split("T")[0];
+      const invDate = parseXeroDate(inv.Date);
 
       for (const line of inv.LineItems || []) {
         if (line.AccountCode === accountCode) {
@@ -450,7 +462,7 @@ export async function pullTransactions(accountId: string) {
 
     for (const cn of creditNotes) {
       if (cn.Status === "DELETED" || cn.Status === "VOIDED") continue;
-      const cnDate = cn.Date.split("T")[0];
+      const cnDate = parseXeroDate(cn.Date);
 
       for (const line of cn.LineItems || []) {
         if (line.AccountCode === accountCode) {
