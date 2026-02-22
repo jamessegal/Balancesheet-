@@ -514,6 +514,7 @@ export const arInvoiceSnapshots = pgTable(
     dueDate: date("due_date"),
     originalAmount: numeric("original_amount", { precision: 18, scale: 2 }).notNull(),
     outstandingAmount: numeric("outstanding_amount", { precision: 18, scale: 2 }).notNull(),
+    currentAmountDue: numeric("current_amount_due", { precision: 18, scale: 2 }),
     agingBucket: arAgingBucketEnum("aging_bucket").notNull().default("current"),
     daysOverdue: integer("days_overdue").notNull().default(0),
     requiresComment: boolean("requires_comment").notNull().default(false),

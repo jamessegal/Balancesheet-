@@ -115,6 +115,7 @@ async function seedTestDataIfNeeded() {
         new_value text,
         timestamp timestamptz NOT NULL DEFAULT now()
       )`;
+    await client`ALTER TABLE ar_invoice_snapshots ADD COLUMN IF NOT EXISTS current_amount_due numeric(18, 2)`;
     await client`CREATE INDEX IF NOT EXISTS idx_ar_recon_account ON ar_reconciliations(recon_account_id)`;
     await client`CREATE INDEX IF NOT EXISTS idx_ar_snapshots_recon ON ar_invoice_snapshots(reconciliation_id)`;
     await client`CREATE INDEX IF NOT EXISTS idx_ar_snapshots_bucket ON ar_invoice_snapshots(aging_bucket)`;
