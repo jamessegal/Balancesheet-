@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "cd app && pnpm install && pnpm db:seed-test && pnpm build",
+    "buildCommand": "cd app && pnpm install && pnpm build",
     "watchPatterns": ["app/**"]
   },
   "deploy": {
