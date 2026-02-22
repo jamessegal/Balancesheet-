@@ -69,10 +69,23 @@ export function PensionsPayableRecon({
     (m) => m.id !== matchedMovementId
   );
 
-  const closingTotal = initialClosingItems.reduce(
+  const itemsTotal = initialClosingItems.reduce(
     (sum, item) => sum + parseFloat(item.amount || "0"),
     0
   );
+
+  // Check if BF contains a rounding item from a prior period that should
+  // automatically carry forward to closing until cleared by a journal/movement.
+  const bfRoundingItems = bfItems.filter((item) =>
+    item.description.toLowerCase().includes("rounding")
+  );
+  const bfRoundingTotal = bfRoundingItems.reduce(
+    (sum, item) => sum + parseFloat(item.amount || "0"),
+    0
+  );
+  const carryForwardRounding = bfRoundingTotal !== 0 ? bfRoundingTotal : 0;
+
+  const closingTotal = itemsTotal + carryForwardRounding;
   const variance = closingBalance - closingTotal;
 
   const totalDebits = movements.reduce(
@@ -95,25 +108,14 @@ export function PensionsPayableRecon({
     ? Math.abs(bfTotal) - matchedDebit // e.g. BF 5306.91 matched to 5306.91 → 0
     : 0;
 
-  // Check if BF already contains a rounding item from a prior period.
-  // If so, the closing variance is a known perpetual difference — don't re-flag it.
-  const bfRoundingTotal = bfItems
-    .filter((item) => item.description.toLowerCase().includes("rounding"))
-    .reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
-  const varianceExplainedByBfRounding =
-    bfRoundingTotal !== 0 &&
-    Math.abs(Math.abs(variance) - Math.abs(bfRoundingTotal)) < 0.01;
-
   // Small unmatched BF with no matching payment — the BF itself is the rounding
   const unmatchedSmallBf =
     !bfCleared && bfTotal !== 0 && Math.abs(bfTotal) <= 1.0;
-  // Small variance between closing total and BS balance — offer to plug the gap,
-  // but only if it's a NEW difference (not already carried forward from BF)
+  // Small variance between closing total and BS balance — offer to plug the gap
   const smallVariance =
     initialClosingItems.length > 0 &&
     Math.abs(variance) >= 0.01 &&
-    Math.abs(variance) <= 1.0 &&
-    !varianceExplainedByBfRounding;
+    Math.abs(variance) <= 1.0;
   const showRoundingButton =
     (bfCleared && Math.abs(bfRounding) >= 0.01) ||
     unmatchedSmallBf ||
@@ -510,7 +512,7 @@ export function PensionsPayableRecon({
         </form>
 
         {/* Closing items table */}
-        {initialClosingItems.length > 0 && (
+        {(initialClosingItems.length > 0 || carryForwardRounding !== 0) && (
           <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -554,6 +556,17 @@ export function PensionsPayableRecon({
                     </td>
                   </tr>
                 ))}
+                {carryForwardRounding !== 0 && (
+                  <tr className="bg-amber-50/50 italic">
+                    <td className="px-4 py-2 text-sm text-gray-500">
+                      Rounding difference (carried forward)
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-gray-500">
+                      {formatCurrency(carryForwardRounding)}
+                    </td>
+                    <td />
+                  </tr>
+                )}
               </tbody>
               <tfoot className="bg-gray-50">
                 <tr className="border-t-2 border-gray-300">
@@ -619,7 +632,7 @@ export function PensionsPayableRecon({
         )}
 
         {/* Empty state */}
-        {initialClosingItems.length === 0 && (
+        {initialClosingItems.length === 0 && carryForwardRounding === 0 && (
           <div className="mt-3 rounded-lg border border-dashed border-gray-300 p-4">
             <p className="text-sm font-medium text-gray-700">
               No closing items yet
