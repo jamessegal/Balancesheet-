@@ -21,8 +21,10 @@ import { AddNoteForm } from "@/components/add-note";
 import { ReconciliationSchedule } from "@/components/reconciliation-schedule";
 import { PensionsPayableRecon } from "@/components/pensions-payable-recon";
 import { BankRecon } from "@/components/bank-recon";
+import { PrepaymentRecon } from "@/components/prepayment-recon";
 import { loadPensionsPayableData } from "@/app/actions/recon-modules";
 import { loadBankReconData } from "@/app/actions/bank-recon";
+import { loadPrepaymentsData } from "@/app/actions/prepayments";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -266,6 +268,24 @@ export default async function AccountDetailPage({
     } catch (err) {
       bankReconError = err instanceof Error ? err.message : "Unknown error loading bank recon data";
       console.error(`[bank-recon] loadBankReconData threw for account ${accountId}:`, err);
+    }
+  }
+
+  let prepaymentsData: Awaited<ReturnType<typeof loadPrepaymentsData>> | null = null;
+  let prepaymentsError: string | null = null;
+  if (reconModule === "prepayments") {
+    try {
+      prepaymentsData = await loadPrepaymentsData(
+        accountId,
+        clientId,
+        period.periodYear,
+        period.periodMonth
+      );
+      if (prepaymentsData && "error" in prepaymentsData) {
+        prepaymentsError = (prepaymentsData as unknown as { error: string }).error;
+      }
+    } catch (err) {
+      prepaymentsError = err instanceof Error ? err.message : "Unknown error loading prepayments data";
     }
   }
 
@@ -677,6 +697,28 @@ export default async function AccountDetailPage({
               <p className="mt-2 text-xs text-red-500">
                 Module: {reconModule} | Account: {accountId} | Type: {account.accountType}
               </p>
+            </div>
+          ) : reconModule === "prepayments" &&
+            prepaymentsData &&
+            !("error" in prepaymentsData) ? (
+            <PrepaymentRecon
+              accountId={accountId}
+              clientId={clientId}
+              periodId={periodId}
+              periodYear={period.periodYear}
+              periodMonth={period.periodMonth}
+              prepayments={prepaymentsData.prepayments}
+              scheduleLines={prepaymentsData.scheduleLines}
+              monthColumns={prepaymentsData.monthColumns}
+              ledgerBalances={prepaymentsData.ledgerBalances}
+              closingBalance={balance}
+            />
+          ) : reconModule === "prepayments" && prepaymentsError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-medium text-red-800">
+                Prepayments module failed to load
+              </p>
+              <p className="mt-1 text-sm text-red-600">{prepaymentsError}</p>
             </div>
           ) : (
             <>
