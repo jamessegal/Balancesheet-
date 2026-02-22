@@ -10,10 +10,10 @@ import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
 import { getXeroConnection, disconnectXero } from "@/app/actions/xero";
-import { createPeriod } from "@/app/actions/periods";
 import { XeroAccountsPanel } from "@/components/xero-accounts";
 import { GLUploadForm } from "@/components/gl-upload";
 import { ReconConfigPanel } from "@/components/recon-config";
+import { OpenPeriodForm } from "@/components/open-period-form";
 import Link from "next/link";
 
 export default async function ClientDetailPage({
@@ -339,31 +339,27 @@ async function PeriodsSection({
       desc(reconciliationPeriods.periodMonth)
     );
 
+  // Build list of openable months (current + 12 months back), excluding already-opened
   const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
+  const existingPeriods = new Set(
+    periods.map((p) => `${p.periodYear}-${p.periodMonth}`)
+  );
+  const availableMonths: { year: number; month: number }[] = [];
+  for (let i = 0; i <= 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    if (!existingPeriods.has(`${y}-${m}`)) {
+      availableMonths.push({ year: y, month: m });
+    }
+  }
 
   return (
     <div className="mt-8">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-medium">Reconciliation Periods</h2>
-        {isManager && (
-          <form
-            action={async (formData: FormData) => {
-              "use server";
-              await createPeriod(formData);
-            }}
-          >
-            <input type="hidden" name="clientId" value={clientId} />
-            <input type="hidden" name="year" value={currentYear} />
-            <input type="hidden" name="month" value={currentMonth} />
-            <button
-              type="submit"
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              Open {MONTH_NAMES[currentMonth - 1]} {currentYear}
-            </button>
-          </form>
+        {isManager && availableMonths.length > 0 && (
+          <OpenPeriodForm clientId={clientId} availableMonths={availableMonths} />
         )}
       </div>
 
