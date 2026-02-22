@@ -6,7 +6,7 @@
     "watchPatterns": ["app/**"]
   },
   "deploy": {
-    "startCommand": "cd app && pnpm start",
+    "startCommand": "cd app && pnpm db:apply && pnpm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
