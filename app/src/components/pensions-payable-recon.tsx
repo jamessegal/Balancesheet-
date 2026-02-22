@@ -97,9 +97,20 @@ export function PensionsPayableRecon({
   // Small unmatched BF with no matching payment — the BF itself is the rounding
   const unmatchedSmallBf =
     !bfCleared && bfTotal !== 0 && Math.abs(bfTotal) <= 1.0;
+  // Small closing balance with no closing items — the balance itself is rounding
+  const smallClosingBalance =
+    initialClosingItems.length === 0 &&
+    closingBalance !== 0 &&
+    Math.abs(closingBalance) <= 1.0;
   const showRoundingButton =
-    (bfCleared && Math.abs(bfRounding) >= 0.01) || unmatchedSmallBf;
-  const roundingAmount = unmatchedSmallBf ? bfTotal : bfRounding;
+    (bfCleared && Math.abs(bfRounding) >= 0.01) ||
+    unmatchedSmallBf ||
+    smallClosingBalance;
+  const roundingAmount = smallClosingBalance
+    ? closingBalance
+    : unmatchedSmallBf
+      ? bfTotal
+      : bfRounding;
 
   function handleClearBF(movementId: string) {
     setMatchedMovementId(movementId);
@@ -118,7 +129,12 @@ export function PensionsPayableRecon({
 
     const formData = new FormData();
     formData.set("accountId", accountId);
-    formData.set("description", "Rounding difference (brought forward)");
+    formData.set(
+      "description",
+      smallClosingBalance
+        ? "Rounding difference"
+        : "Rounding difference (brought forward)"
+    );
     formData.set("amount", String(roundingAmount));
 
     const result = await addReconciliationItem(formData);
@@ -286,9 +302,11 @@ export function PensionsPayableRecon({
                 Rounding difference: {formatCurrency(Math.abs(roundingAmount))}
               </p>
               <p className="text-xs text-amber-600">
-                {unmatchedSmallBf
-                  ? "This small brought-forward balance appears to be a cumulative rounding difference."
-                  : "The payment didn\u2019t exactly clear the brought-forward balance."}
+                {smallClosingBalance
+                  ? "This small closing balance appears to be a cumulative rounding difference."
+                  : unmatchedSmallBf
+                    ? "This small brought-forward balance appears to be a cumulative rounding difference."
+                    : "The payment didn\u2019t exactly clear the brought-forward balance."}
                 {" "}You can add it to closing and journal it off later.
               </p>
             </div>
