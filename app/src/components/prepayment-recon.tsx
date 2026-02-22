@@ -1,0 +1,855 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  createPrepayment,
+  overridePrepaymentLine,
+  cancelPrepayment,
+  deletePrepayment,
+} from "@/app/actions/prepayments";
+
+// ------------------------------------------------------------------
+// Types
+// ------------------------------------------------------------------
+
+interface PrepaymentRow {
+  id: string;
+  vendorName: string;
+  description: string | null;
+  nominalAccount: string | null;
+  startDate: string;
+  endDate: string;
+  totalAmount: string;
+  numberOfMonths: number;
+  monthlyAmount: string;
+  status: "active" | "fully_amortised" | "cancelled";
+}
+
+interface ScheduleLine {
+  id: string;
+  prepaymentId: string;
+  monthEndDate: string;
+  openingBalance: string;
+  monthlyExpense: string;
+  closingBalance: string;
+  originalAmount: string;
+  overrideAmount: string | null;
+  isOverridden: boolean;
+}
+
+interface Props {
+  accountId: string;
+  clientId: string;
+  periodId: string;
+  periodYear: number;
+  periodMonth: number;
+  prepayments: PrepaymentRow[];
+  scheduleLines: ScheduleLine[];
+  monthColumns: string[];
+  ledgerBalances: Record<string, number>;
+  closingBalance: number;
+}
+
+// ------------------------------------------------------------------
+// Component
+// ------------------------------------------------------------------
+
+export function PrepaymentRecon({
+  clientId,
+  periodId,
+  periodYear,
+  periodMonth,
+  prepayments: initialPrepayments,
+  scheduleLines,
+  monthColumns,
+  ledgerBalances,
+  closingBalance,
+}: Props) {
+  const router = useRouter();
+  const [showForm, setShowForm] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Override state
+  const [editingLine, setEditingLine] = useState<string | null>(null);
+  const [overrideValue, setOverrideValue] = useState("");
+  const [overrideNotes, setOverrideNotes] = useState("");
+
+  // Form state
+  const [vendorName, setVendorName] = useState("");
+  const [description, setDescription] = useState("");
+  const [nominalAccount, setNominalAccount] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [totalAmount, setTotalAmount] = useState("");
+
+  // Filter out cancelled prepayments
+  const activePrepayments = initialPrepayments.filter(
+    (p) => p.status !== "cancelled"
+  );
+
+  // Build a lookup: prepaymentId -> monthEndDate -> ScheduleLine
+  const lineMap = new Map<string, Map<string, ScheduleLine>>();
+  for (const line of scheduleLines) {
+    if (!lineMap.has(line.prepaymentId)) {
+      lineMap.set(line.prepaymentId, new Map());
+    }
+    lineMap.get(line.prepaymentId)!.set(line.monthEndDate, line);
+  }
+
+  // Calculate the viewing month end
+  const viewingMonthEnd = getMonthEnd(periodYear, periodMonth);
+
+  // Calculate totals per month column
+  const monthTotals: Record<
+    string,
+    { totalExpensed: number; closingBalance: number }
+  > = {};
+  for (const month of monthColumns) {
+    let totalExpensed = 0;
+    let totalClosing = 0;
+    for (const p of activePrepayments) {
+      const line = lineMap.get(p.id)?.get(month);
+      if (line) {
+        totalExpensed += parseFloat(line.monthlyExpense);
+        totalClosing += parseFloat(line.closingBalance);
+      } else {
+        // If no line for this month, the prepayment may not cover it.
+        // Check if this month is before the prepayment start — carry opening balance
+        // Or after the prepayment end — balance is 0
+        const allLines = scheduleLines.filter(
+          (l) => l.prepaymentId === p.id
+        );
+        if (allLines.length > 0) {
+          const firstLine = allLines.reduce((a, b) =>
+            a.monthEndDate < b.monthEndDate ? a : b
+          );
+          const lastLine = allLines.reduce((a, b) =>
+            a.monthEndDate > b.monthEndDate ? a : b
+          );
+          if (month < firstLine.monthEndDate) {
+            // Before schedule starts - balance is total amount
+            totalClosing += parseFloat(p.totalAmount);
+          } else if (month > lastLine.monthEndDate) {
+            // After schedule ends - fully amortised
+            totalClosing += 0;
+          }
+        }
+      }
+    }
+    monthTotals[month] = {
+      totalExpensed: Math.round(totalExpensed * 100) / 100,
+      closingBalance: Math.round(totalClosing * 100) / 100,
+    };
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!vendorName.trim() || !startDate || !endDate || !totalAmount) return;
+
+    setLoading(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.set("clientId", clientId);
+    formData.set("vendorName", vendorName);
+    formData.set("description", description);
+    formData.set("nominalAccount", nominalAccount);
+    formData.set("startDate", startDate);
+    formData.set("endDate", endDate);
+    formData.set("totalAmount", totalAmount);
+    formData.set("periodId", periodId);
+
+    const result = await createPrepayment(formData);
+    if (result && "error" in result && result.error) {
+      setError(result.error as string);
+    } else {
+      setVendorName("");
+      setDescription("");
+      setNominalAccount("");
+      setStartDate("");
+      setEndDate("");
+      setTotalAmount("");
+      setShowForm(false);
+      router.refresh();
+    }
+    setLoading(false);
+  }
+
+  async function handleOverride(lineId: string) {
+    const val = parseFloat(overrideValue);
+    if (isNaN(val) || val < 0) {
+      setError("Override amount must be a non-negative number");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const result = await overridePrepaymentLine(
+      lineId,
+      val,
+      overrideNotes || null,
+      periodId,
+      clientId
+    );
+
+    if (result && "error" in result && result.error) {
+      setError(result.error as string);
+    } else {
+      setEditingLine(null);
+      setOverrideValue("");
+      setOverrideNotes("");
+      router.refresh();
+    }
+    setLoading(false);
+  }
+
+  async function handleCancel(prepaymentId: string) {
+    if (!confirm("Cancel this prepayment? It will no longer appear in the schedule.")) return;
+
+    setLoading(true);
+    const result = await cancelPrepayment(prepaymentId, periodId, clientId);
+    if (result && "error" in result && result.error) {
+      setError(result.error as string);
+    } else {
+      router.refresh();
+    }
+    setLoading(false);
+  }
+
+  async function handleDelete(prepaymentId: string) {
+    if (!confirm("Permanently delete this prepayment and all its schedule lines? This cannot be undone.")) return;
+
+    setLoading(true);
+    const result = await deletePrepayment(prepaymentId, periodId, clientId);
+    if (result && "error" in result && result.error) {
+      setError(result.error as string);
+    } else {
+      router.refresh();
+    }
+    setLoading(false);
+  }
+
+  // Variance for current viewing month
+  const currentMonthTotals = monthTotals[viewingMonthEnd];
+  const calculatedClosing = currentMonthTotals?.closingBalance ?? 0;
+  const variance = closingBalance - calculatedClosing;
+  const isReconciled = Math.abs(variance) < 0.01;
+
+  return (
+    <div className="space-y-4">
+      {/* Reconciliation status */}
+      {activePrepayments.length > 0 && (
+        isReconciled ? (
+          <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+            <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm font-medium text-green-800">
+              Reconciled — prepayment schedule matches ledger balance
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+            <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm font-medium text-red-800">
+              Not reconciled — variance of {formatCurrency(Math.abs(variance))}
+            </p>
+          </div>
+        )
+      )}
+
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 p-3">
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {/* Add Prepayment Form */}
+      <div className="rounded-lg border border-gray-200 bg-white">
+        <button
+          onClick={() => setShowForm(!showForm)}
+          className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          <span>Add Prepayment</span>
+          <svg
+            className={`h-5 w-5 transition-transform ${showForm ? "rotate-180" : ""}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {showForm && (
+          <form onSubmit={handleCreate} className="border-t border-gray-200 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Vendor *
+                </label>
+                <input
+                  type="text"
+                  value={vendorName}
+                  onChange={(e) => setVendorName(e.target.value)}
+                  placeholder="e.g. AWS"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Description
+                </label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="e.g. Annual hosting subscription"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Account
+                </label>
+                <input
+                  type="text"
+                  value={nominalAccount}
+                  onChange={(e) => setNominalAccount(e.target.value)}
+                  placeholder="e.g. 1700"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Start Date *
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  End Date *
+                </label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Total Amount *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={totalAmount}
+                  onChange={(e) => setTotalAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-right font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+            </div>
+            {/* Preview calculation */}
+            {startDate && endDate && totalAmount && new Date(endDate) > new Date(startDate) && (
+              <div className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                {(() => {
+                  const months = calcMonths(startDate, endDate);
+                  const amt = parseFloat(totalAmount);
+                  const monthly = amt / months;
+                  return (
+                    <>
+                      <span className="font-medium">{months} months</span>
+                      {" | "}
+                      <span className="font-mono">
+                        {formatCurrency(monthly)}/month
+                      </span>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? "Creating..." : "Create Prepayment"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {/* Prepayment Schedule Grid */}
+      {activePrepayments.length > 0 ? (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Vendor
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Description
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Account
+                </th>
+                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Period
+                </th>
+                <th className="px-3 py-2 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Mths
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Amount
+                </th>
+                <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Opening
+                </th>
+                {monthColumns.map((month) => (
+                  <th
+                    key={month}
+                    className={`px-3 py-2 text-right text-xs font-medium uppercase tracking-wider ${
+                      month === viewingMonthEnd
+                        ? "bg-blue-50 text-blue-700"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    {formatMonthHeader(month)}
+                  </th>
+                ))}
+                <th className="px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-gray-500 w-16">
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {activePrepayments.map((p) => {
+                const pLines = lineMap.get(p.id);
+                // Opening balance for the grid = balance at start of viewing period
+                const firstVisibleLine = pLines?.get(monthColumns[0]);
+                const openingBal = firstVisibleLine
+                  ? parseFloat(firstVisibleLine.openingBalance)
+                  : (() => {
+                      // Before schedule starts, opening = total amount
+                      // After schedule ends, opening = 0
+                      const allPLines = scheduleLines.filter(
+                        (l) => l.prepaymentId === p.id
+                      );
+                      if (allPLines.length === 0) return parseFloat(p.totalAmount);
+                      const firstLine = allPLines.reduce((a, b) =>
+                        a.monthEndDate < b.monthEndDate ? a : b
+                      );
+                      if (monthColumns[0] < firstLine.monthEndDate) {
+                        return parseFloat(p.totalAmount);
+                      }
+                      return 0;
+                    })();
+
+                return (
+                  <tr
+                    key={p.id}
+                    className={`hover:bg-gray-50 ${
+                      p.status === "fully_amortised" ? "opacity-60" : ""
+                    }`}
+                  >
+                    <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-gray-900 whitespace-nowrap">
+                      {p.vendorName}
+                    </td>
+                    <td className="px-3 py-2 text-gray-700 max-w-[12rem] truncate">
+                      {p.description || "-"}
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">
+                      {p.nominalAccount || "-"}
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap text-xs">
+                      {formatDateShort(p.startDate)} – {formatDateShort(p.endDate)}
+                    </td>
+                    <td className="px-3 py-2 text-center text-gray-500">
+                      {p.numberOfMonths}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-900 whitespace-nowrap">
+                      {formatCurrency(parseFloat(p.totalAmount))}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-900 whitespace-nowrap">
+                      {formatCurrency(openingBal)}
+                    </td>
+                    {monthColumns.map((month) => {
+                      const line = pLines?.get(month);
+                      const isCurrentMonth = month === viewingMonthEnd;
+                      const isEditing = editingLine === line?.id;
+
+                      if (!line) {
+                        return (
+                          <td
+                            key={month}
+                            className={`px-3 py-2 text-right text-gray-300 ${
+                              isCurrentMonth ? "bg-blue-50/50" : ""
+                            }`}
+                          >
+                            -
+                          </td>
+                        );
+                      }
+
+                      const expense = parseFloat(line.monthlyExpense);
+                      const closing = parseFloat(line.closingBalance);
+
+                      return (
+                        <td
+                          key={month}
+                          className={`px-3 py-2 text-right whitespace-nowrap ${
+                            isCurrentMonth ? "bg-blue-50/50" : ""
+                          } ${line.isOverridden ? "bg-amber-50" : ""}`}
+                        >
+                          {isEditing ? (
+                            <div className="flex flex-col items-end gap-1">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={overrideValue}
+                                onChange={(e) => setOverrideValue(e.target.value)}
+                                className="w-24 rounded border border-amber-300 px-2 py-1 text-right text-xs font-mono focus:border-amber-500 focus:outline-none"
+                                autoFocus
+                              />
+                              <input
+                                type="text"
+                                value={overrideNotes}
+                                onChange={(e) => setOverrideNotes(e.target.value)}
+                                placeholder="Notes..."
+                                className="w-24 rounded border border-gray-300 px-2 py-1 text-right text-xs focus:border-blue-500 focus:outline-none"
+                              />
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => handleOverride(line.id)}
+                                  disabled={loading}
+                                  className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setEditingLine(null);
+                                    setOverrideValue("");
+                                    setOverrideNotes("");
+                                  }}
+                                  className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-300"
+                                >
+                                  X
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingLine(line.id);
+                                setOverrideValue(
+                                  line.monthlyExpense
+                                );
+                                setOverrideNotes("");
+                              }}
+                              className="group text-right"
+                              title="Click to override"
+                            >
+                              <div className="font-mono text-gray-900 group-hover:text-amber-700">
+                                ({formatCurrencyShort(expense)})
+                                {line.isOverridden && (
+                                  <span className="ml-1 text-[10px] text-amber-600">*</span>
+                                )}
+                              </div>
+                              <div className="font-mono text-xs text-gray-500">
+                                {formatCurrencyShort(closing)}
+                              </div>
+                            </button>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-2 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleCancel(p.id)}
+                          className="text-xs text-red-400 hover:text-red-600"
+                          title="Cancel prepayment"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+
+            {/* Footer rows */}
+            <tfoot className="bg-gray-50">
+              {/* Total Expensed row */}
+              <tr className="border-t-2 border-gray-300">
+                <td
+                  colSpan={7}
+                  className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-900"
+                >
+                  Total Expensed
+                </td>
+                {monthColumns.map((month) => (
+                  <td
+                    key={month}
+                    className={`px-3 py-2 text-right font-mono font-semibold text-gray-900 whitespace-nowrap ${
+                      month === viewingMonthEnd ? "bg-blue-50" : ""
+                    }`}
+                  >
+                    ({formatCurrencyShort(monthTotals[month]?.totalExpensed ?? 0)})
+                  </td>
+                ))}
+                <td />
+              </tr>
+
+              {/* Closing Balance row */}
+              <tr className="border-t border-gray-200">
+                <td
+                  colSpan={7}
+                  className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-900"
+                >
+                  Closing Balance
+                </td>
+                {monthColumns.map((month) => (
+                  <td
+                    key={month}
+                    className={`px-3 py-2 text-right font-mono font-semibold text-gray-900 whitespace-nowrap ${
+                      month === viewingMonthEnd ? "bg-blue-50" : ""
+                    }`}
+                  >
+                    {formatCurrencyShort(monthTotals[month]?.closingBalance ?? 0)}
+                  </td>
+                ))}
+                <td />
+              </tr>
+
+              {/* Ledger Balance row */}
+              <tr className="border-t border-gray-200">
+                <td
+                  colSpan={7}
+                  className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700"
+                >
+                  Ledger Balance
+                </td>
+                {monthColumns.map((month) => {
+                  const ledger = ledgerBalances[month];
+                  return (
+                    <td
+                      key={month}
+                      className={`px-3 py-2 text-right font-mono text-gray-700 whitespace-nowrap ${
+                        month === viewingMonthEnd ? "bg-blue-50" : ""
+                      }`}
+                    >
+                      {ledger !== undefined
+                        ? formatCurrencyShort(ledger)
+                        : (
+                          <span className="text-gray-300">-</span>
+                        )}
+                    </td>
+                  );
+                })}
+                <td />
+              </tr>
+
+              {/* Variance row */}
+              <tr className="border-t border-gray-300">
+                <td
+                  colSpan={7}
+                  className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-900"
+                >
+                  Variance
+                </td>
+                {monthColumns.map((month) => {
+                  const ledger = ledgerBalances[month];
+                  const calculated = monthTotals[month]?.closingBalance ?? 0;
+                  const monthVariance =
+                    ledger !== undefined ? ledger - calculated : undefined;
+                  const ok =
+                    monthVariance !== undefined &&
+                    Math.abs(monthVariance) < 0.01;
+
+                  return (
+                    <td
+                      key={month}
+                      className={`px-3 py-2 text-right font-mono font-semibold whitespace-nowrap ${
+                        month === viewingMonthEnd ? "bg-blue-50" : ""
+                      } ${
+                        monthVariance === undefined
+                          ? "text-gray-300"
+                          : ok
+                          ? "text-green-600"
+                          : "text-red-600"
+                      }`}
+                    >
+                      {monthVariance !== undefined ? (
+                        <>
+                          {formatCurrencyShort(monthVariance)}
+                          {ok ? " \u2713" : ""}
+                        </>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  );
+                })}
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center">
+          <p className="text-sm font-medium text-gray-700">
+            No prepayments set up yet
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Use the &quot;Add Prepayment&quot; form above to create a new prepayment schedule.
+            Each prepayment will be automatically amortised across the defined period.
+          </p>
+          <p className="mt-2 text-xs text-gray-400">
+            The closing balance to reconcile is{" "}
+            <span className="font-semibold font-mono">
+              {formatCurrency(closingBalance)}
+            </span>
+          </p>
+        </div>
+      )}
+
+      {/* Cancelled prepayments (collapsed) */}
+      {initialPrepayments.filter((p) => p.status === "cancelled").length > 0 && (
+        <details className="rounded-lg border border-gray-200 bg-white">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-500 hover:bg-gray-50">
+            Cancelled Prepayments (
+            {initialPrepayments.filter((p) => p.status === "cancelled").length}
+            )
+          </summary>
+          <div className="border-t border-gray-200 p-4">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">
+                    Vendor
+                  </th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">
+                    Description
+                  </th>
+                  <th className="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500">
+                    Amount
+                  </th>
+                  <th className="px-3 py-2 text-center text-xs font-medium uppercase text-gray-500 w-20">
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {initialPrepayments
+                  .filter((p) => p.status === "cancelled")
+                  .map((p) => (
+                    <tr key={p.id} className="opacity-60">
+                      <td className="px-3 py-2 text-gray-900">
+                        {p.vendorName}
+                      </td>
+                      <td className="px-3 py-2 text-gray-500">
+                        {p.description || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-900">
+                        {formatCurrency(parseFloat(p.totalAmount))}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          onClick={() => handleDelete(p.id)}
+                          className="text-xs text-red-400 hover:text-red-600"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------------
+
+function getMonthEnd(year: number, month: number): string {
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+}
+
+function calcMonths(startDate: string, endDate: string): number {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth()) +
+    1
+  );
+}
+
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+    minimumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatCurrencyShort(amount: number): string {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatMonthHeader(monthEndDate: string): string {
+  const d = new Date(monthEndDate + "T00:00:00");
+  const day = d.getDate();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = String(d.getFullYear()).slice(-2);
+  return `${String(day).padStart(2, "0")}/${month}/${year}`;
+}
+
+function formatDateShort(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = String(d.getFullYear()).slice(-2);
+  return `${day}/${month}/${year}`;
+}

@@ -372,6 +372,75 @@ export const bankReconItems = pgTable(
 );
 
 // ============================================================
+// PREPAYMENTS
+// ============================================================
+
+export const prepaymentStatusEnum = pgEnum("prepayment_status", [
+  "active",
+  "fully_amortised",
+  "cancelled",
+]);
+
+export const prepayments = pgTable(
+  "prepayments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    vendorName: text("vendor_name").notNull(),
+    description: text("description"),
+    nominalAccount: text("nominal_account"),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    totalAmount: numeric("total_amount", { precision: 18, scale: 2 }).notNull(),
+    currency: varchar("currency", { length: 3 }).notNull().default("GBP"),
+    numberOfMonths: integer("number_of_months").notNull(),
+    monthlyAmount: numeric("monthly_amount", { precision: 18, scale: 2 }).notNull(),
+    status: prepaymentStatusEnum("status").notNull().default("active"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("idx_prepayments_client").on(table.clientId)]
+);
+
+export const prepaymentScheduleLines = pgTable(
+  "prepayment_schedule_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    prepaymentId: uuid("prepayment_id")
+      .notNull()
+      .references(() => prepayments.id, { onDelete: "cascade" }),
+    monthEndDate: date("month_end_date").notNull(),
+    openingBalance: numeric("opening_balance", { precision: 18, scale: 2 }).notNull(),
+    monthlyExpense: numeric("monthly_expense", { precision: 18, scale: 2 }).notNull(),
+    closingBalance: numeric("closing_balance", { precision: 18, scale: 2 }).notNull(),
+    originalAmount: numeric("original_amount", { precision: 18, scale: 2 }).notNull(),
+    overrideAmount: numeric("override_amount", { precision: 18, scale: 2 }),
+    isOverridden: boolean("is_overridden").notNull().default(false),
+    auditNotes: text("audit_notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique().on(table.prepaymentId, table.monthEndDate),
+    index("idx_prepayment_schedule_prepayment").on(table.prepaymentId),
+    index("idx_prepayment_schedule_month").on(table.monthEndDate),
+  ]
+);
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -401,3 +470,7 @@ export type BankReconStatement = typeof bankReconStatements.$inferSelect;
 export type NewBankReconStatement = typeof bankReconStatements.$inferInsert;
 export type BankReconItem = typeof bankReconItems.$inferSelect;
 export type NewBankReconItem = typeof bankReconItems.$inferInsert;
+export type Prepayment = typeof prepayments.$inferSelect;
+export type NewPrepayment = typeof prepayments.$inferInsert;
+export type PrepaymentScheduleLine = typeof prepaymentScheduleLines.$inferSelect;
+export type NewPrepaymentScheduleLine = typeof prepaymentScheduleLines.$inferInsert;
