@@ -542,6 +542,7 @@ export async function addReconciliationItem(formData: FormData) {
   const accountId = formData.get("accountId") as string;
   const description = (formData.get("description") as string)?.trim();
   const amountStr = (formData.get("amount") as string)?.trim();
+  const itemDate = (formData.get("itemDate") as string)?.trim() || null;
 
   if (!accountId || !description || !amountStr) {
     return { error: "Description and amount are required" };
@@ -562,10 +563,27 @@ export async function addReconciliationItem(formData: FormData) {
     return { error: "Account not found" };
   }
 
+  // Validate date is within the period month if provided
+  if (itemDate) {
+    const [period] = await db
+      .select()
+      .from(reconciliationPeriods)
+      .where(eq(reconciliationPeriods.id, account.periodId))
+      .limit(1);
+
+    if (period) {
+      const d = new Date(itemDate);
+      if (d.getFullYear() !== period.periodYear || d.getMonth() + 1 !== period.periodMonth) {
+        return { error: "Date must be within the reconciliation period month" };
+      }
+    }
+  }
+
   await db.insert(reconciliationItems).values({
     reconAccountId: accountId,
     description,
     amount: String(amount),
+    itemDate,
     createdBy: session.user.id,
   });
 

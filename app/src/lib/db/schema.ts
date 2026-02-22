@@ -195,6 +195,7 @@ export const reconciliationItems = pgTable(
       .references(() => reconciliationAccounts.id),
     description: text("description").notNull(),
     amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    itemDate: date("item_date"),
     glTransactionId: uuid("gl_transaction_id").references(
       () => glTransactions.id
     ),

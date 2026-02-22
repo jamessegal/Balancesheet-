@@ -28,6 +28,7 @@ interface ClosingItem {
   id: string;
   description: string;
   amount: string;
+  itemDate: string | null;
   glTransactionId: string | null;
   createdByName: string | null;
 }
@@ -40,6 +41,8 @@ interface Props {
   closingItems: ClosingItem[];
   suggestedPaymentMatches: Record<string, number>;
   closingBalance: number;
+  periodYear: number;
+  periodMonth: number;
 }
 
 export function PensionsPayableRecon({
@@ -50,6 +53,8 @@ export function PensionsPayableRecon({
   closingItems: initialClosingItems,
   suggestedPaymentMatches,
   closingBalance,
+  periodYear,
+  periodMonth,
 }: Props) {
   const router = useRouter();
 
@@ -59,9 +64,15 @@ export function PensionsPayableRecon({
   >(suggestedPaymentMatches);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
+  const [itemDate, setItemDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Date constraints for the period
+  const lastDay = new Date(periodYear, periodMonth, 0).getDate();
+  const minDate = `${periodYear}-${String(periodMonth).padStart(2, "0")}-01`;
+  const maxDate = `${periodYear}-${String(periodMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
   // BF clearing calculations
   const totalAllocatedToBF = Object.values(matchedPayments).reduce(
@@ -80,7 +91,7 @@ export function PensionsPayableRecon({
     0
   );
 
-  // Carry forward rounding from BF
+  // Detect carry-forward rounding from BF (shown as a suggestion, not auto-included)
   const bfRoundingItems = bfItems.filter((item) =>
     item.description.toLowerCase().includes("rounding")
   );
@@ -88,14 +99,21 @@ export function PensionsPayableRecon({
     (sum, item) => sum + parseFloat(item.amount || "0"),
     0
   );
-  const carryForwardRounding = bfRoundingTotal !== 0 ? bfRoundingTotal : 0;
+  const hasBfRoundingCarryForward = bfRoundingTotal !== 0;
 
-  // If BF has a residual that's small (rounding), auto-carry it to closing
-  const bfResidualCarryForward =
-    bfPartiallyCleared && Math.abs(bfResidual) <= 1.0 ? bfResidual : 0;
+  // Detect small BF residual from partial payment
+  const hasBfResidualCarryForward =
+    bfPartiallyCleared && Math.abs(bfResidual) <= 1.0;
 
-  const closingTotal =
-    itemsTotal + carryForwardRounding + bfResidualCarryForward;
+  // Check if user has already added these as closing items
+  const hasRoundingItem = initialClosingItems.some((item) =>
+    item.description.toLowerCase().includes("rounding") && item.description.toLowerCase().includes("carried forward")
+  );
+  const hasResidualItem = initialClosingItems.some((item) =>
+    item.description.toLowerCase().includes("bf residual") || item.description.toLowerCase().includes("payment rounding")
+  );
+
+  const closingTotal = itemsTotal;
   const variance = closingBalance - closingTotal;
 
   // Movement totals
@@ -196,6 +214,7 @@ export function PensionsPayableRecon({
     formData.set("accountId", accountId);
     formData.set("description", description);
     formData.set("amount", amount);
+    if (itemDate) formData.set("itemDate", itemDate);
 
     const result = await addReconciliationItem(formData);
     if (result && "error" in result && result.error) {
@@ -203,6 +222,7 @@ export function PensionsPayableRecon({
     } else {
       setDescription("");
       setAmount("");
+      setItemDate("");
       router.refresh();
     }
     setLoading(false);
@@ -557,6 +577,14 @@ export function PensionsPayableRecon({
               className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
             <input
+              type="date"
+              value={itemDate}
+              onChange={(e) => setItemDate(e.target.value)}
+              min={minDate}
+              max={maxDate}
+              className="w-40 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <input
               type="number"
               step="0.01"
               value={amount}
@@ -575,13 +603,16 @@ export function PensionsPayableRecon({
         </form>
 
         {/* Closing items table */}
-        {(initialClosingItems.length > 0 || carryForwardRounding !== 0 || bfResidualCarryForward !== 0) && (
+        {(initialClosingItems.length > 0 || (hasBfRoundingCarryForward && !hasRoundingItem) || (hasBfResidualCarryForward && !hasResidualItem)) && (
           <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">
                     Description
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">
+                    Date
                   </th>
                   <th className="px-4 py-2 text-right text-xs font-medium uppercase text-gray-500">
                     Amount
@@ -605,6 +636,9 @@ export function PensionsPayableRecon({
                         </span>
                       )}
                     </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
+                      {item.itemDate || ""}
+                    </td>
                     <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-gray-900">
                       {formatCurrency(parseFloat(item.amount))}
                     </td>
@@ -619,32 +653,50 @@ export function PensionsPayableRecon({
                     </td>
                   </tr>
                 ))}
-                {carryForwardRounding !== 0 && (
-                  <tr className="bg-amber-50/50 italic">
-                    <td className="px-4 py-2 text-sm text-gray-500">
-                      Rounding difference (carried forward)
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-gray-500">
-                      {formatCurrency(carryForwardRounding)}
+                {hasBfRoundingCarryForward && !hasRoundingItem && (
+                  <tr className="bg-amber-50/50">
+                    <td className="px-4 py-2 text-sm italic text-amber-700">
+                      Rounding difference (carried forward): {formatCurrency(bfRoundingTotal)}
                     </td>
                     <td />
+                    <td />
+                    <td className="whitespace-nowrap px-4 py-2 text-right">
+                      <button
+                        onClick={() =>
+                          handleAddRounding(bfRoundingTotal, "Rounding difference (carried forward)")
+                        }
+                        disabled={loading}
+                        className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                      >
+                        {loading ? "..." : "Add"}
+                      </button>
+                    </td>
                   </tr>
                 )}
-                {bfResidualCarryForward !== 0 && (
-                  <tr className="bg-amber-50/50 italic">
-                    <td className="px-4 py-2 text-sm text-gray-500">
-                      BF residual (payment rounding)
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-gray-500">
-                      {formatCurrency(bfResidualCarryForward)}
+                {hasBfResidualCarryForward && !hasResidualItem && (
+                  <tr className="bg-amber-50/50">
+                    <td className="px-4 py-2 text-sm italic text-amber-700">
+                      BF residual (payment rounding): {formatCurrency(bfResidual)}
                     </td>
                     <td />
+                    <td />
+                    <td className="whitespace-nowrap px-4 py-2 text-right">
+                      <button
+                        onClick={() =>
+                          handleAddRounding(bfResidual, "BF residual (payment rounding)")
+                        }
+                        disabled={loading}
+                        className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                      >
+                        {loading ? "..." : "Add"}
+                      </button>
+                    </td>
                   </tr>
                 )}
               </tbody>
               <tfoot className="bg-gray-50">
                 <tr className="border-t-2 border-gray-300">
-                  <td className="px-4 py-2 text-sm font-medium text-gray-900">
+                  <td colSpan={2} className="px-4 py-2 text-sm font-medium text-gray-900">
                     Closing Total
                   </td>
                   <td className="px-4 py-2 text-right text-sm font-mono font-medium text-gray-900">
@@ -653,7 +705,7 @@ export function PensionsPayableRecon({
                   <td />
                 </tr>
                 <tr className="border-t border-gray-200">
-                  <td className="px-4 py-2 text-sm font-medium text-gray-900">
+                  <td colSpan={2} className="px-4 py-2 text-sm font-medium text-gray-900">
                     Balance per BS
                   </td>
                   <td className="px-4 py-2 text-right text-sm font-mono font-medium text-gray-900">
@@ -662,7 +714,7 @@ export function PensionsPayableRecon({
                   <td />
                 </tr>
                 <tr className="border-t border-gray-300">
-                  <td className="px-4 py-2 text-sm font-semibold text-gray-900">
+                  <td colSpan={2} className="px-4 py-2 text-sm font-semibold text-gray-900">
                     Variance
                   </td>
                   <td
@@ -706,7 +758,7 @@ export function PensionsPayableRecon({
         )}
 
         {/* Empty state */}
-        {initialClosingItems.length === 0 && carryForwardRounding === 0 && bfResidualCarryForward === 0 && (
+        {initialClosingItems.length === 0 && !hasBfRoundingCarryForward && !hasBfResidualCarryForward && (
           <div className="mt-3 rounded-lg border border-dashed border-gray-300 p-4">
             <p className="text-sm font-medium text-gray-700">
               No closing items yet

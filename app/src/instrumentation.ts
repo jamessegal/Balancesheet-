@@ -25,6 +25,11 @@ async function seedTestDataIfNeeded() {
     const client = pg.default(connectionString);
     const db = drizzle(client);
 
+    // Run schema migrations (idempotent)
+    await client`ALTER TABLE reconciliation_items ADD COLUMN IF NOT EXISTS item_date date`;
+    await client`ALTER TABLE reconciliation_items ADD COLUMN IF NOT EXISTS gl_transaction_id uuid REFERENCES gl_transactions(id)`;
+    console.log("[seed] Schema migrations applied.");
+
     // Check if test clients already exist
     const existing = await db
       .select({ id: schema.clients.id })

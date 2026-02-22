@@ -292,6 +292,7 @@ export async function loadPensionsPayableData(accountId: string) {
     id: string;
     description: string;
     amount: string;
+    itemDate: string | null;
     glTransactionId: string | null;
     createdByName: string | null;
   }[] = [];
@@ -302,6 +303,7 @@ export async function loadPensionsPayableData(accountId: string) {
         id: reconciliationItems.id,
         description: reconciliationItems.description,
         amount: reconciliationItems.amount,
+        itemDate: reconciliationItems.itemDate,
         glTransactionId: reconciliationItems.glTransactionId,
         createdByName: users.name,
       })

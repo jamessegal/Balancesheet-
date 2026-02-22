@@ -21,6 +21,8 @@ interface Props {
   closingBalance: number;
   bfTotal?: number;
   movement?: number | null;
+  periodYear: number;
+  periodMonth: number;
 }
 
 export function ReconciliationSchedule({
@@ -29,13 +31,20 @@ export function ReconciliationSchedule({
   closingBalance,
   bfTotal = 0,
   movement = null,
+  periodYear,
+  periodMonth,
 }: Props) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
+  const [itemDate, setItemDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  const lastDay = new Date(periodYear, periodMonth, 0).getDate();
+  const minDate = `${periodYear}-${String(periodMonth).padStart(2, "0")}-01`;
+  const maxDate = `${periodYear}-${String(periodMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
   const totalReconciled = items.reduce(
     (sum, item) => sum + parseFloat(item.amount || "0"),
@@ -54,6 +63,7 @@ export function ReconciliationSchedule({
     formData.set("accountId", accountId);
     formData.set("description", description);
     formData.set("amount", amount);
+    if (itemDate) formData.set("itemDate", itemDate);
 
     const result = await addReconciliationItem(formData);
 
@@ -62,6 +72,7 @@ export function ReconciliationSchedule({
     } else {
       setDescription("");
       setAmount("");
+      setItemDate("");
       router.refresh();
     }
 
@@ -97,6 +108,14 @@ export function ReconciliationSchedule({
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Description (e.g. January payroll accrual)"
             className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <input
+            type="date"
+            value={itemDate}
+            onChange={(e) => setItemDate(e.target.value)}
+            min={minDate}
+            max={maxDate}
+            className="w-40 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <input
             type="number"

@@ -10,7 +10,7 @@ import {
   glTransactions,
   accountReconConfig,
 } from "@/lib/db/schema";
-import { eq, desc, and, gte, lte } from "drizzle-orm";
+import { eq, desc, and, gte, lte, asc } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
@@ -244,6 +244,68 @@ export default async function AccountDetailPage({
     pensionsData = await loadPensionsPayableData(accountId);
   }
 
+  // Fetch all periods for this client to find prev/next account for this same xeroAccountId
+  const allPeriods = await db
+    .select({
+      id: reconciliationPeriods.id,
+      periodYear: reconciliationPeriods.periodYear,
+      periodMonth: reconciliationPeriods.periodMonth,
+    })
+    .from(reconciliationPeriods)
+    .where(eq(reconciliationPeriods.clientId, clientId))
+    .orderBy(
+      asc(reconciliationPeriods.periodYear),
+      asc(reconciliationPeriods.periodMonth)
+    );
+
+  const currentPeriodIndex = allPeriods.findIndex((p) => p.id === periodId);
+  const prevPeriodInfo = currentPeriodIndex > 0 ? allPeriods[currentPeriodIndex - 1] : null;
+  const nextPeriodInfo = currentPeriodIndex < allPeriods.length - 1 ? allPeriods[currentPeriodIndex + 1] : null;
+
+  // Find the same account in adjacent periods
+  let prevAccountLink: { periodId: string; accountId: string; label: string } | null = null;
+  let nextAccountLink: { periodId: string; accountId: string; label: string } | null = null;
+
+  if (prevPeriodInfo) {
+    const [prevAcc] = await db
+      .select({ id: reconciliationAccounts.id })
+      .from(reconciliationAccounts)
+      .where(
+        and(
+          eq(reconciliationAccounts.periodId, prevPeriodInfo.id),
+          eq(reconciliationAccounts.xeroAccountId, account.xeroAccountId)
+        )
+      )
+      .limit(1);
+    if (prevAcc) {
+      prevAccountLink = {
+        periodId: prevPeriodInfo.id,
+        accountId: prevAcc.id,
+        label: MONTH_NAMES[prevPeriodInfo.periodMonth - 1],
+      };
+    }
+  }
+
+  if (nextPeriodInfo) {
+    const [nextAcc] = await db
+      .select({ id: reconciliationAccounts.id })
+      .from(reconciliationAccounts)
+      .where(
+        and(
+          eq(reconciliationAccounts.periodId, nextPeriodInfo.id),
+          eq(reconciliationAccounts.xeroAccountId, account.xeroAccountId)
+        )
+      )
+      .limit(1);
+    if (nextAcc) {
+      nextAccountLink = {
+        periodId: nextPeriodInfo.id,
+        accountId: nextAcc.id,
+        label: MONTH_NAMES[nextPeriodInfo.periodMonth - 1],
+      };
+    }
+  }
+
   const periodLabel = `${MONTH_NAMES[period.periodMonth - 1]} ${period.periodYear}`;
   const badge = STATUS_BADGES[account.status] || STATUS_BADGES.draft;
   const balance = parseFloat(account.balance);
@@ -266,17 +328,46 @@ export default async function AccountDetailPage({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">
-            {account.accountCode && (
-              <span className="font-mono text-gray-500">{account.accountCode}</span>
-            )}{" "}
-            {account.accountName}
-          </h1>
+          <div className="flex items-center gap-3">
+            {prevAccountLink ? (
+              <Link
+                href={`/clients/${clientId}/periods/${prevAccountLink.periodId}/accounts/${prevAccountLink.accountId}`}
+                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                title={prevAccountLink.label}
+              >
+                &larr; {prevAccountLink.label.slice(0, 3)}
+              </Link>
+            ) : (
+              <span className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-medium text-gray-300">
+                &larr;
+              </span>
+            )}
+            <h1 className="text-2xl font-semibold">
+              {account.accountCode && (
+                <span className="font-mono text-gray-500">{account.accountCode}</span>
+              )}{" "}
+              {account.accountName}
+            </h1>
+            {nextAccountLink ? (
+              <Link
+                href={`/clients/${clientId}/periods/${nextAccountLink.periodId}/accounts/${nextAccountLink.accountId}`}
+                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                title={nextAccountLink.label}
+              >
+                {nextAccountLink.label.slice(0, 3)} &rarr;
+              </Link>
+            ) : (
+              <span className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-medium text-gray-300">
+                &rarr;
+              </span>
+            )}
+          </div>
           <div className="mt-2 flex items-center gap-3">
             <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${badge.className}`}>
               {badge.label}
             </span>
             <span className="text-sm text-gray-500">{account.accountType}</span>
+            <span className="text-sm text-gray-400">{periodLabel}</span>
           </div>
         </div>
       </div>
@@ -537,6 +628,8 @@ export default async function AccountDetailPage({
               closingItems={pensionsData.closingItems}
               suggestedPaymentMatches={pensionsData.suggestedPaymentMatches}
               closingBalance={balance}
+              periodYear={period.periodYear}
+              periodMonth={period.periodMonth}
             />
           ) : (
             <>
@@ -549,6 +642,8 @@ export default async function AccountDetailPage({
                 closingBalance={balance}
                 bfTotal={bfTotal}
                 movement={movement}
+                periodYear={period.periodYear}
+                periodMonth={period.periodMonth}
               />
             </>
           )}
