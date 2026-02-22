@@ -235,9 +235,15 @@ export default async function AccountDetailPage({
       .limit(1);
     if (config) {
       reconModule = config.reconModule;
+    } else if (account.accountType === "BANK") {
+      // Auto-detect: bank accounts use bank reconciliation by default
+      reconModule = "bank";
     }
   } catch {
     // Config table may not exist yet
+    if (account.accountType === "BANK") {
+      reconModule = "bank";
+    }
   }
 
   // Load module-specific data
