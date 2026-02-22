@@ -450,6 +450,113 @@ export const prepaymentScheduleLines = pgTable(
 );
 
 // ============================================================
+// ACCOUNTS RECEIVABLE RECONCILIATION
+// ============================================================
+
+export const arReconStatusEnum = pgEnum("ar_recon_status", [
+  "draft",
+  "complete",
+  "reviewed",
+]);
+
+export const arRiskFlagEnum = pgEnum("ar_risk_flag", [
+  "none",
+  "watch",
+  "high",
+]);
+
+export const arAgingBucketEnum = pgEnum("ar_aging_bucket", [
+  "current",
+  "1_30",
+  "31_60",
+  "61_90",
+  "90_plus",
+]);
+
+export const arReconciliations = pgTable(
+  "ar_reconciliations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    reconAccountId: uuid("recon_account_id")
+      .notNull()
+      .references(() => reconciliationAccounts.id)
+      .unique(),
+    monthEndDate: date("month_end_date").notNull(),
+    ledgerBalance: numeric("ledger_balance", { precision: 18, scale: 2 }).notNull(),
+    agedReportTotal: numeric("aged_report_total", { precision: 18, scale: 2 }),
+    variance: numeric("variance", { precision: 18, scale: 2 }),
+    status: arReconStatusEnum("status").notNull().default("draft"),
+    signedOffBy: uuid("signed_off_by").references(() => users.id),
+    signedOffAt: timestamp("signed_off_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_ar_recon_account").on(table.reconAccountId),
+  ]
+);
+
+export const arInvoiceSnapshots = pgTable(
+  "ar_invoice_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    reconciliationId: uuid("reconciliation_id")
+      .notNull()
+      .references(() => arReconciliations.id, { onDelete: "cascade" }),
+    xeroInvoiceId: text("xero_invoice_id"),
+    invoiceNumber: text("invoice_number"),
+    contactName: text("contact_name").notNull(),
+    invoiceDate: date("invoice_date"),
+    dueDate: date("due_date"),
+    originalAmount: numeric("original_amount", { precision: 18, scale: 2 }).notNull(),
+    outstandingAmount: numeric("outstanding_amount", { precision: 18, scale: 2 }).notNull(),
+    agingBucket: arAgingBucketEnum("aging_bucket").notNull().default("current"),
+    daysOverdue: integer("days_overdue").notNull().default(0),
+    requiresComment: boolean("requires_comment").notNull().default(false),
+    commentText: text("comment_text"),
+    riskFlag: arRiskFlagEnum("risk_flag").notNull().default("none"),
+    reviewed: boolean("reviewed").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_ar_snapshots_recon").on(table.reconciliationId),
+    index("idx_ar_snapshots_bucket").on(table.agingBucket),
+  ]
+);
+
+export const arAuditLog = pgTable(
+  "ar_audit_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    invoiceSnapshotId: uuid("invoice_snapshot_id")
+      .notNull()
+      .references(() => arInvoiceSnapshots.id, { onDelete: "cascade" }),
+    changeType: text("change_type").notNull(),
+    previousValue: text("previous_value"),
+    newValue: text("new_value"),
+    timestamp: timestamp("timestamp", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_ar_audit_snapshot").on(table.invoiceSnapshotId),
+    index("idx_ar_audit_user").on(table.userId),
+  ]
+);
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -483,3 +590,9 @@ export type Prepayment = typeof prepayments.$inferSelect;
 export type NewPrepayment = typeof prepayments.$inferInsert;
 export type PrepaymentScheduleLine = typeof prepaymentScheduleLines.$inferSelect;
 export type NewPrepaymentScheduleLine = typeof prepaymentScheduleLines.$inferInsert;
+export type ARReconciliation = typeof arReconciliations.$inferSelect;
+export type NewARReconciliation = typeof arReconciliations.$inferInsert;
+export type ARInvoiceSnapshot = typeof arInvoiceSnapshots.$inferSelect;
+export type NewARInvoiceSnapshot = typeof arInvoiceSnapshots.$inferInsert;
+export type ARAuditLog = typeof arAuditLog.$inferSelect;
+export type NewARAuditLog = typeof arAuditLog.$inferInsert;

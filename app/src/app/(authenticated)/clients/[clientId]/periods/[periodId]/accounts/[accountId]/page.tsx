@@ -22,9 +22,11 @@ import { ReconciliationSchedule } from "@/components/reconciliation-schedule";
 import { PensionsPayableRecon } from "@/components/pensions-payable-recon";
 import { BankRecon } from "@/components/bank-recon";
 import { PrepaymentRecon } from "@/components/prepayment-recon";
+import { ARRecon } from "@/components/ar-recon";
 import { loadPensionsPayableData } from "@/app/actions/recon-modules";
 import { loadBankReconData } from "@/app/actions/bank-recon";
 import { loadPrepaymentsData } from "@/app/actions/prepayments";
+import { loadARReconData } from "@/app/actions/ar-recon";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -286,6 +288,19 @@ export default async function AccountDetailPage({
       }
     } catch (err) {
       prepaymentsError = err instanceof Error ? err.message : "Unknown error loading prepayments data";
+    }
+  }
+
+  let arReconData: Awaited<ReturnType<typeof loadARReconData>> | null = null;
+  let arReconError: string | null = null;
+  if (reconModule === "accounts_receivable") {
+    try {
+      arReconData = await loadARReconData(accountId);
+      if (arReconData && "error" in arReconData) {
+        arReconError = (arReconData as { error: string }).error;
+      }
+    } catch (err) {
+      arReconError = err instanceof Error ? err.message : "Unknown error loading AR recon data";
     }
   }
 
@@ -719,6 +734,25 @@ export default async function AccountDetailPage({
                 Prepayments module failed to load
               </p>
               <p className="mt-1 text-sm text-red-600">{prepaymentsError}</p>
+            </div>
+          ) : reconModule === "accounts_receivable" &&
+            arReconData &&
+            !("error" in arReconData) ? (
+            <ARRecon
+              accountId={accountId}
+              glBalance={arReconData.glBalance}
+              monthEndDate={arReconData.monthEndDate}
+              periodYear={arReconData.periodYear}
+              periodMonth={arReconData.periodMonth}
+              recon={arReconData.recon}
+              invoices={arReconData.invoices}
+            />
+          ) : reconModule === "accounts_receivable" && arReconError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-medium text-red-800">
+                Accounts Receivable module failed to load
+              </p>
+              <p className="mt-1 text-sm text-red-600">{arReconError}</p>
             </div>
           ) : (
             <>
