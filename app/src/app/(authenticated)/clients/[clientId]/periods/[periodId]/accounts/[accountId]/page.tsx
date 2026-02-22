@@ -239,8 +239,10 @@ export default async function AccountDetailPage({
       // Auto-detect: bank accounts use bank reconciliation by default
       reconModule = "bank";
     }
-  } catch {
+    console.log(`[recon-module] account=${account.accountName} xeroId=${account.xeroAccountId} type=${account.accountType} config=${config ? config.reconModule : "none"} resolved=${reconModule}`);
+  } catch (configErr) {
     // Config table may not exist yet
+    console.error(`[recon-module] Config lookup failed for ${account.accountName}:`, configErr);
     if (account.accountType === "BANK") {
       reconModule = "bank";
     }
@@ -253,8 +255,18 @@ export default async function AccountDetailPage({
   }
 
   let bankReconData: Awaited<ReturnType<typeof loadBankReconData>> | null = null;
+  let bankReconError: string | null = null;
   if (reconModule === "bank") {
-    bankReconData = await loadBankReconData(accountId);
+    try {
+      bankReconData = await loadBankReconData(accountId);
+      if (bankReconData && "error" in bankReconData) {
+        bankReconError = (bankReconData as { error: string }).error;
+        console.error(`[bank-recon] loadBankReconData error for account ${accountId}: ${bankReconError}`);
+      }
+    } catch (err) {
+      bankReconError = err instanceof Error ? err.message : "Unknown error loading bank recon data";
+      console.error(`[bank-recon] loadBankReconData threw for account ${accountId}:`, err);
+    }
   }
 
   // Fetch all periods for this client to find prev/next account for this same xeroAccountId
@@ -656,6 +668,16 @@ export default async function AccountDetailPage({
               statement={bankReconData.statement}
               reconItems={bankReconData.reconItems}
             />
+          ) : reconModule === "bank" && bankReconError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-medium text-red-800">
+                Bank reconciliation failed to load
+              </p>
+              <p className="mt-1 text-sm text-red-600">{bankReconError}</p>
+              <p className="mt-2 text-xs text-red-500">
+                Module: {reconModule} | Account: {accountId} | Type: {account.accountType}
+              </p>
+            </div>
           ) : (
             <>
               <p className="mb-4 text-sm text-gray-500">
