@@ -4,7 +4,7 @@ import {
   reconciliationPeriods,
   reconciliationAccounts,
 } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
@@ -57,6 +57,25 @@ export default async function PeriodDetailPage({
     .from(reconciliationAccounts)
     .where(eq(reconciliationAccounts.periodId, periodId))
     .orderBy(reconciliationAccounts.accountCode);
+
+  // Fetch all periods for this client to find prev/next
+  const allPeriods = await db
+    .select({
+      id: reconciliationPeriods.id,
+      periodYear: reconciliationPeriods.periodYear,
+      periodMonth: reconciliationPeriods.periodMonth,
+    })
+    .from(reconciliationPeriods)
+    .where(eq(reconciliationPeriods.clientId, clientId))
+    .orderBy(
+      asc(reconciliationPeriods.periodYear),
+      asc(reconciliationPeriods.periodMonth)
+    );
+
+  const currentIndex = allPeriods.findIndex((p) => p.id === periodId);
+  const prevPeriod = currentIndex > 0 ? allPeriods[currentIndex - 1] : null;
+  const nextPeriod =
+    currentIndex < allPeriods.length - 1 ? allPeriods[currentIndex + 1] : null;
 
   const periodLabel = `${MONTH_NAMES[period.periodMonth - 1]} ${period.periodYear}`;
   const periodBadge = STATUS_BADGES[period.status] || STATUS_BADGES.draft;
@@ -137,7 +156,35 @@ export default async function PeriodDetailPage({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">{periodLabel}</h1>
+          <div className="flex items-center gap-3">
+            {prevPeriod ? (
+              <Link
+                href={`/clients/${clientId}/periods/${prevPeriod.id}`}
+                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                title={`${MONTH_NAMES[prevPeriod.periodMonth - 1]} ${prevPeriod.periodYear}`}
+              >
+                &larr; {MONTH_NAMES[prevPeriod.periodMonth - 1].slice(0, 3)}
+              </Link>
+            ) : (
+              <span className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-medium text-gray-300">
+                &larr;
+              </span>
+            )}
+            <h1 className="text-2xl font-semibold">{periodLabel}</h1>
+            {nextPeriod ? (
+              <Link
+                href={`/clients/${clientId}/periods/${nextPeriod.id}`}
+                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                title={`${MONTH_NAMES[nextPeriod.periodMonth - 1]} ${nextPeriod.periodYear}`}
+              >
+                {MONTH_NAMES[nextPeriod.periodMonth - 1].slice(0, 3)} &rarr;
+              </Link>
+            ) : (
+              <span className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm font-medium text-gray-300">
+                &rarr;
+              </span>
+            )}
+          </div>
           <div className="mt-2 flex items-center gap-3">
             <span
               className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${periodBadge.className}`}

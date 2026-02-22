@@ -422,10 +422,11 @@ async function seedTestData() {
         ],
       },
       // ── February: BF 10500, two payments 7000 + 3500.50 (£0.50 over), new accrual 10800 ──
+      // Closing = 10500 - 10500.50 + 10800 = 10799.50
       {
         year: 2026,
         month: 2,
-        balance: "10800.00",
+        balance: "10799.50",
         priorBalance: "10500.00",
         glMovements: [
           {
