@@ -97,17 +97,17 @@ export function PensionsPayableRecon({
   // Small unmatched BF with no matching payment — the BF itself is the rounding
   const unmatchedSmallBf =
     !bfCleared && bfTotal !== 0 && Math.abs(bfTotal) <= 1.0;
-  // Small closing balance with no closing items — the balance itself is rounding
-  const smallClosingBalance =
-    initialClosingItems.length === 0 &&
-    closingBalance !== 0 &&
-    Math.abs(closingBalance) <= 1.0;
+  // Small variance between closing total and BS balance — offer to plug the gap
+  const smallVariance =
+    initialClosingItems.length > 0 &&
+    Math.abs(variance) >= 0.01 &&
+    Math.abs(variance) <= 1.0;
   const showRoundingButton =
     (bfCleared && Math.abs(bfRounding) >= 0.01) ||
     unmatchedSmallBf ||
-    smallClosingBalance;
-  const roundingAmount = smallClosingBalance
-    ? closingBalance
+    smallVariance;
+  const roundingAmount = smallVariance
+    ? variance
     : unmatchedSmallBf
       ? bfTotal
       : bfRounding;
@@ -131,7 +131,7 @@ export function PensionsPayableRecon({
     formData.set("accountId", accountId);
     formData.set(
       "description",
-      smallClosingBalance
+      smallVariance
         ? "Rounding difference"
         : "Rounding difference (brought forward)"
     );
@@ -294,19 +294,17 @@ export function PensionsPayableRecon({
           </div>
         )}
 
-        {/* Rounding notice */}
-        {showRoundingButton && (
+        {/* BF rounding notice (not for variance case — that shows in closing section) */}
+        {showRoundingButton && !smallVariance && (
           <div className="mt-2 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-amber-800">
                 Rounding difference: {formatCurrency(Math.abs(roundingAmount))}
               </p>
               <p className="text-xs text-amber-600">
-                {smallClosingBalance
-                  ? "This small closing balance appears to be a cumulative rounding difference."
-                  : unmatchedSmallBf
-                    ? "This small brought-forward balance appears to be a cumulative rounding difference."
-                    : "The payment didn\u2019t exactly clear the brought-forward balance."}
+                {unmatchedSmallBf
+                  ? "This small brought-forward balance appears to be a cumulative rounding difference."
+                  : "The payment didn\u2019t exactly clear the brought-forward balance."}
                 {" "}You can add it to closing and journal it off later.
               </p>
             </div>
@@ -582,6 +580,29 @@ export function PensionsPayableRecon({
                 </tr>
               </tfoot>
             </table>
+          </div>
+        )}
+
+        {/* Variance rounding notice — shown in closing section */}
+        {smallVariance && (
+          <div className="mt-2 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-amber-800">
+                Rounding difference: {formatCurrency(Math.abs(variance))}
+              </p>
+              <p className="text-xs text-amber-600">
+                The closing total is slightly off from the balance sheet — likely
+                a rounding difference. You can add it to closing and journal it
+                off later.
+              </p>
+            </div>
+            <button
+              onClick={handleAddRounding}
+              disabled={loading}
+              className="ml-4 shrink-0 rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {loading ? "..." : "Add rounding to closing"}
+            </button>
           </div>
         )}
 
