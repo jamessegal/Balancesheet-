@@ -94,14 +94,26 @@ export function PensionsPayableRecon({
   const bfRounding = bfCleared
     ? Math.abs(bfTotal) - matchedDebit // e.g. BF 5306.91 matched to 5306.91 → 0
     : 0;
+
+  // Check if BF already contains a rounding item from a prior period.
+  // If so, the closing variance is a known perpetual difference — don't re-flag it.
+  const bfRoundingTotal = bfItems
+    .filter((item) => item.description.toLowerCase().includes("rounding"))
+    .reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
+  const varianceExplainedByBfRounding =
+    bfRoundingTotal !== 0 &&
+    Math.abs(Math.abs(variance) - Math.abs(bfRoundingTotal)) < 0.01;
+
   // Small unmatched BF with no matching payment — the BF itself is the rounding
   const unmatchedSmallBf =
     !bfCleared && bfTotal !== 0 && Math.abs(bfTotal) <= 1.0;
-  // Small variance between closing total and BS balance — offer to plug the gap
+  // Small variance between closing total and BS balance — offer to plug the gap,
+  // but only if it's a NEW difference (not already carried forward from BF)
   const smallVariance =
     initialClosingItems.length > 0 &&
     Math.abs(variance) >= 0.01 &&
-    Math.abs(variance) <= 1.0;
+    Math.abs(variance) <= 1.0 &&
+    !varianceExplainedByBfRounding;
   const showRoundingButton =
     (bfCleared && Math.abs(bfRounding) >= 0.01) ||
     unmatchedSmallBf ||
