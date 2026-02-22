@@ -8,6 +8,7 @@ import {
   accountNotes,
   users,
   glTransactions,
+  accountReconConfig,
 } from "@/lib/db/schema";
 import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { notFound } from "next/navigation";
@@ -18,6 +19,8 @@ import { AccountStatusControl } from "@/components/account-status";
 import { PullTransactionsButton } from "@/components/pull-transactions";
 import { AddNoteForm } from "@/components/add-note";
 import { ReconciliationSchedule } from "@/components/reconciliation-schedule";
+import { PensionsPayableRecon } from "@/components/pensions-payable-recon";
+import { loadPensionsPayableData } from "@/app/actions/recon-modules";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -215,6 +218,32 @@ export default async function AccountDetailPage({
     0
   );
 
+  // Load recon module config for this account
+  let reconModule = "simple_list";
+  try {
+    const [config] = await db
+      .select()
+      .from(accountReconConfig)
+      .where(
+        and(
+          eq(accountReconConfig.clientId, clientId),
+          eq(accountReconConfig.xeroAccountId, account.xeroAccountId)
+        )
+      )
+      .limit(1);
+    if (config) {
+      reconModule = config.reconModule;
+    }
+  } catch {
+    // Config table may not exist yet
+  }
+
+  // Load module-specific data
+  let pensionsData: Awaited<ReturnType<typeof loadPensionsPayableData>> | null = null;
+  if (reconModule === "pensions_payable") {
+    pensionsData = await loadPensionsPayableData(accountId);
+  }
+
   const periodLabel = `${MONTH_NAMES[period.periodMonth - 1]} ${period.periodYear}`;
   const badge = STATUS_BADGES[account.status] || STATUS_BADGES.draft;
   const balance = parseFloat(account.balance);
@@ -286,7 +315,8 @@ export default async function AccountDetailPage({
         />
       </div>
 
-      {/* Brought Forward Reconciliation */}
+      {/* Brought Forward Reconciliation — hidden for modules that handle BF internally */}
+      {reconModule === "simple_list" && (
       <div className="mt-8">
         <h2 className="text-lg font-medium">Brought Forward Reconciliation</h2>
         <p className="mt-1 text-sm text-gray-500">
@@ -338,8 +368,10 @@ export default async function AccountDetailPage({
           </div>
         )}
       </div>
+      )}
 
-      {/* Transactions — GL upload data takes priority over API-pulled data */}
+      {/* Transactions — hidden for modules that display movements inline */}
+      {reconModule === "simple_list" && (
       <div className="mt-8">
         {hasGLData ? (
           <>
@@ -480,21 +512,46 @@ export default async function AccountDetailPage({
           </>
         )}
       </div>
+      )}
 
-      {/* Closing Reconciliation */}
+      {/* Closing Reconciliation — renders based on configured module */}
       <div className="mt-8">
-        <h2 className="text-lg font-medium">Closing Reconciliation</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          List the items that make up the closing balance. Variance should be zero.
-        </p>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-medium">Reconciliation</h2>
+          {reconModule !== "simple_list" && (
+            <span className="inline-flex rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+              {reconModule.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+            </span>
+          )}
+        </div>
+
         <div className="mt-4">
-          <ReconciliationSchedule
-            accountId={accountId}
-            items={reconItems}
-            closingBalance={balance}
-            bfTotal={bfTotal}
-            movement={movement}
-          />
+          {reconModule === "pensions_payable" &&
+          pensionsData &&
+          !("error" in pensionsData) ? (
+            <PensionsPayableRecon
+              accountId={accountId}
+              bfItems={pensionsData.bfItems}
+              bfTotal={pensionsData.bfTotal}
+              movements={pensionsData.movements}
+              closingItems={pensionsData.closingItems}
+              autoMatchMovementId={pensionsData.autoMatchMovementId}
+              closingBalance={balance}
+            />
+          ) : (
+            <>
+              <p className="mb-4 text-sm text-gray-500">
+                List the items that make up the closing balance. Variance should be zero.
+              </p>
+              <ReconciliationSchedule
+                accountId={accountId}
+                items={reconItems}
+                closingBalance={balance}
+                bfTotal={bfTotal}
+                movement={movement}
+              />
+            </>
+          )}
         </div>
       </div>
 

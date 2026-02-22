@@ -13,6 +13,7 @@ import { getXeroConnection, disconnectXero } from "@/app/actions/xero";
 import { createPeriod } from "@/app/actions/periods";
 import { XeroAccountsPanel } from "@/components/xero-accounts";
 import { GLUploadForm } from "@/components/gl-upload";
+import { ReconConfigPanel } from "@/components/recon-config";
 import Link from "next/link";
 
 export default async function ClientDetailPage({
@@ -292,6 +293,9 @@ export default async function ClientDetailPage({
           </div>
         </div>
       )}
+
+      {/* Reconciliation Config — map accounts to recon modules */}
+      {isManager && <ReconConfigPanel clientId={clientId} />}
 
       {/* Chart of Accounts — only show when Xero is connected */}
       {xeroConnection?.status === "active" && isManager && (

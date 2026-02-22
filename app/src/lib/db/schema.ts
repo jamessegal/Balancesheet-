@@ -195,6 +195,9 @@ export const reconciliationItems = pgTable(
       .references(() => reconciliationAccounts.id),
     description: text("description").notNull(),
     amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    glTransactionId: uuid("gl_transaction_id").references(
+      () => glTransactions.id
+    ),
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id),
@@ -224,6 +227,33 @@ export const accountNotes = pgTable("account_notes", {
     .notNull()
     .defaultNow(),
 });
+
+// ============================================================
+// ACCOUNT RECONCILIATION CONFIG
+// ============================================================
+
+export const accountReconConfig = pgTable(
+  "account_recon_config",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    xeroAccountId: text("xero_account_id"),
+    accountName: text("account_name").notNull(),
+    reconModule: text("recon_module").notNull().default("simple_list"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique().on(table.clientId, table.xeroAccountId),
+    index("idx_recon_config_client").on(table.clientId),
+  ]
+);
 
 // ============================================================
 // GENERAL LEDGER UPLOADS
@@ -304,3 +334,5 @@ export type GLUpload = typeof glUploads.$inferSelect;
 export type NewGLUpload = typeof glUploads.$inferInsert;
 export type GLTransaction = typeof glTransactions.$inferSelect;
 export type NewGLTransaction = typeof glTransactions.$inferInsert;
+export type AccountReconConfig = typeof accountReconConfig.$inferSelect;
+export type NewAccountReconConfig = typeof accountReconConfig.$inferInsert;
