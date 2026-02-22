@@ -535,7 +535,7 @@ export default async function AccountDetailPage({
               bfTotal={pensionsData.bfTotal}
               movements={pensionsData.movements}
               closingItems={pensionsData.closingItems}
-              autoMatchMovementId={pensionsData.autoMatchMovementId}
+              suggestedPaymentMatches={pensionsData.suggestedPaymentMatches}
               closingBalance={balance}
             />
           ) : (

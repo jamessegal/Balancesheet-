@@ -313,29 +313,72 @@ export async function loadPensionsPayableData(accountId: string) {
     // Table may not exist
   }
 
-  // 4. Auto-match detection
+  // 4. Smart auto-match detection
+  // Find debit payment(s) that best clear the BF total. Supports:
+  //   - Single exact match
+  //   - Single near-match (within £1 for rounding)
+  //   - Multiple payments that sum to BF
   const bfTotal = bfItems.reduce(
     (sum, item) => sum + parseFloat(item.amount || "0"),
     0
   );
 
-  // Look for a payment movement that exactly matches the BF total
-  let autoMatchMovementId: string | null = null;
+  // suggestedPaymentMatches: map of movementId → amount allocated to BF
+  let suggestedPaymentMatches: Record<string, number> = {};
+
   if (bfTotal !== 0) {
     const absBfTotal = Math.abs(bfTotal);
-    for (const mov of movements) {
-      // For a liability (credit balance), the clearing payment would be a debit
-      const debit = parseFloat(mov.debit || "0");
-      const credit = parseFloat(mov.credit || "0");
-      // Check if a debit matches the BF total (payment clearing the liability)
-      if (Math.abs(debit - absBfTotal) < 0.01 && debit > 0) {
-        autoMatchMovementId = mov.id;
-        break;
+    const debits = movements
+      .map((mov) => ({
+        id: mov.id,
+        amount: parseFloat(mov.debit || "0"),
+      }))
+      .filter((d) => d.amount > 0);
+
+    // Strategy 1: single exact match (within £0.01)
+    const exactMatch = debits.find(
+      (d) => Math.abs(d.amount - absBfTotal) < 0.01
+    );
+    if (exactMatch) {
+      suggestedPaymentMatches = { [exactMatch.id]: exactMatch.amount };
+    }
+
+    // Strategy 2: single near-match (within £1 — rounding)
+    if (Object.keys(suggestedPaymentMatches).length === 0) {
+      const nearMatch = debits.find(
+        (d) => Math.abs(d.amount - absBfTotal) <= 1.0
+      );
+      if (nearMatch) {
+        suggestedPaymentMatches = { [nearMatch.id]: nearMatch.amount };
       }
-      // Also check credit in case the BF was a debit balance
-      if (Math.abs(credit - absBfTotal) < 0.01 && credit > 0) {
-        autoMatchMovementId = mov.id;
-        break;
+    }
+
+    // Strategy 3: combination of payments that sum to BF (within £1)
+    // Try pairs first, then all debits
+    if (Object.keys(suggestedPaymentMatches).length === 0 && debits.length >= 2) {
+      // Try pairs
+      for (let i = 0; i < debits.length; i++) {
+        for (let j = i + 1; j < debits.length; j++) {
+          const pairSum = debits[i].amount + debits[j].amount;
+          if (Math.abs(pairSum - absBfTotal) <= 1.0) {
+            suggestedPaymentMatches = {
+              [debits[i].id]: debits[i].amount,
+              [debits[j].id]: debits[j].amount,
+            };
+            break;
+          }
+        }
+        if (Object.keys(suggestedPaymentMatches).length > 0) break;
+      }
+
+      // Try all debits together
+      if (Object.keys(suggestedPaymentMatches).length === 0) {
+        const allSum = debits.reduce((s, d) => s + d.amount, 0);
+        if (Math.abs(allSum - absBfTotal) <= 1.0) {
+          for (const d of debits) {
+            suggestedPaymentMatches[d.id] = d.amount;
+          }
+        }
       }
     }
   }
@@ -345,7 +388,7 @@ export async function loadPensionsPayableData(accountId: string) {
     bfTotal,
     movements,
     closingItems,
-    autoMatchMovementId,
+    suggestedPaymentMatches,
     balance: parseFloat(account.balance),
     periodLabel: `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}`,
   };

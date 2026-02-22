@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveClosingItems } from "@/app/actions/recon-modules";
 import {
   addReconciliationItem,
   deleteReconciliationItem,
@@ -39,7 +38,7 @@ interface Props {
   bfTotal: number;
   movements: GLMovement[];
   closingItems: ClosingItem[];
-  autoMatchMovementId: string | null;
+  suggestedPaymentMatches: Record<string, number>;
   closingBalance: number;
 }
 
@@ -49,33 +48,39 @@ export function PensionsPayableRecon({
   bfTotal,
   movements,
   closingItems: initialClosingItems,
-  autoMatchMovementId,
+  suggestedPaymentMatches,
   closingBalance,
 }: Props) {
   const router = useRouter();
-  const [matchedMovementId, setMatchedMovementId] = useState<string | null>(
-    autoMatchMovementId
-  );
-  const [bfCleared, setBfCleared] = useState(autoMatchMovementId !== null);
+
+  // Multi-payment matching: map of movementId → amount allocated to BF clearing
+  const [matchedPayments, setMatchedPayments] = useState<
+    Record<string, number>
+  >(suggestedPaymentMatches);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Separate movements into the matched payment and remaining accruals
-  const matchedMovement = movements.find((m) => m.id === matchedMovementId);
-  const unMatchedMovements = movements.filter(
-    (m) => m.id !== matchedMovementId
+  // BF clearing calculations
+  const totalAllocatedToBF = Object.values(matchedPayments).reduce(
+    (s, v) => s + v,
+    0
   );
+  const absBfTotal = Math.abs(bfTotal);
+  const bfResidual = absBfTotal - totalAllocatedToBF; // positive = still owed
+  const bfFullyCleared = Math.abs(bfResidual) < 0.01;
+  const bfPartiallyCleared =
+    totalAllocatedToBF > 0 && !bfFullyCleared;
 
+  // Closing totals
   const itemsTotal = initialClosingItems.reduce(
     (sum, item) => sum + parseFloat(item.amount || "0"),
     0
   );
 
-  // Check if BF contains a rounding item from a prior period that should
-  // automatically carry forward to closing until cleared by a journal/movement.
+  // Carry forward rounding from BF
   const bfRoundingItems = bfItems.filter((item) =>
     item.description.toLowerCase().includes("rounding")
   );
@@ -85,9 +90,15 @@ export function PensionsPayableRecon({
   );
   const carryForwardRounding = bfRoundingTotal !== 0 ? bfRoundingTotal : 0;
 
-  const closingTotal = itemsTotal + carryForwardRounding;
+  // If BF has a residual that's small (rounding), auto-carry it to closing
+  const bfResidualCarryForward =
+    bfPartiallyCleared && Math.abs(bfResidual) <= 1.0 ? bfResidual : 0;
+
+  const closingTotal =
+    itemsTotal + carryForwardRounding + bfResidualCarryForward;
   const variance = closingBalance - closingTotal;
 
+  // Movement totals
   const totalDebits = movements.reduce(
     (s, t) => s + parseFloat(t.debit || "0"),
     0
@@ -98,67 +109,52 @@ export function PensionsPayableRecon({
   );
   const netMovement = totalCredits - totalDebits;
 
-  // Detect BF rounding: BF exists, there's a payment that is close but not
-  // exact, or BF is so small no payment matches at all. If the remaining
-  // BF amount after best-match payment is tiny, offer to write it off.
-  const matchedDebit = matchedMovement
-    ? parseFloat(matchedMovement.debit || "0")
-    : 0;
-  const bfRounding = bfCleared
-    ? Math.abs(bfTotal) - matchedDebit // e.g. BF 5306.91 matched to 5306.91 → 0
-    : 0;
-
-  // Small unmatched BF with no matching payment — the BF itself is the rounding
-  const unmatchedSmallBf =
-    !bfCleared && bfTotal !== 0 && Math.abs(bfTotal) <= 1.0;
-  // Small variance between closing total and BS balance — offer to plug the gap
+  // Rounding detection for the closing section
   const smallVariance =
     initialClosingItems.length > 0 &&
     Math.abs(variance) >= 0.01 &&
     Math.abs(variance) <= 1.0;
-  const showRoundingButton =
-    (bfCleared && Math.abs(bfRounding) >= 0.01) ||
-    unmatchedSmallBf ||
-    smallVariance;
-  const roundingAmount = smallVariance
-    ? variance
-    : unmatchedSmallBf
-      ? bfTotal
-      : bfRounding;
+  // Small unmatched BF with no matching payment — the BF itself is the rounding
+  const unmatchedSmallBf =
+    totalAllocatedToBF === 0 && bfTotal !== 0 && Math.abs(bfTotal) <= 1.0;
+  const showBfRoundingButton = unmatchedSmallBf;
+  const showClosingRoundingButton = smallVariance;
 
-  function handleClearBF(movementId: string) {
-    setMatchedMovementId(movementId);
-    setBfCleared(true);
+  function handleMatchToBF(movementId: string) {
+    const mov = movements.find((m) => m.id === movementId);
+    if (!mov) return;
+    const debit = parseFloat(mov.debit || "0");
+    // Allocate full debit amount (or remaining BF, whichever is smaller)
+    const allocate = Math.min(debit, absBfTotal - totalAllocatedToBF + (matchedPayments[movementId] || 0));
+    setMatchedPayments((prev) => ({ ...prev, [movementId]: allocate }));
   }
 
-  function handleUndoClear() {
-    setMatchedMovementId(null);
-    setBfCleared(false);
+  function handleUnmatchFromBF(movementId: string) {
+    setMatchedPayments((prev) => {
+      const next = { ...prev };
+      delete next[movementId];
+      return next;
+    });
   }
 
-  // Add BF rounding difference as a closing item
-  async function handleAddRounding() {
+  function handleClearAll() {
+    setMatchedPayments({});
+  }
+
+  // Add rounding difference as a closing item
+  async function handleAddRounding(amt: number, desc: string) {
     setLoading(true);
     setError(null);
 
     const formData = new FormData();
     formData.set("accountId", accountId);
-    formData.set(
-      "description",
-      smallVariance
-        ? "Rounding difference"
-        : "Rounding difference (brought forward)"
-    );
-    formData.set("amount", String(roundingAmount));
+    formData.set("description", desc);
+    formData.set("amount", String(amt));
 
     const result = await addReconciliationItem(formData);
     if (result && "error" in result && result.error) {
       setError(result.error);
     } else {
-      // If it was an unmatched small BF, mark it as cleared now
-      if (unmatchedSmallBf) {
-        setBfCleared(true);
-      }
       router.refresh();
     }
     setLoading(false);
@@ -277,18 +273,18 @@ export function PensionsPayableRecon({
                 {bfItems.map((item) => (
                   <tr
                     key={item.id}
-                    className={bfCleared ? "bg-green-50 opacity-60" : ""}
+                    className={bfFullyCleared ? "bg-green-50 opacity-60" : ""}
                   >
                     <td className="px-4 py-2 text-sm text-gray-900">
                       {item.description}
-                      {bfCleared && (
+                      {bfFullyCleared && (
                         <span className="ml-2 text-xs text-green-600">
                           Cleared
                         </span>
                       )}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-gray-900">
-                      {bfCleared ? (
+                      {bfFullyCleared ? (
                         <span className="line-through">
                           {formatCurrency(parseFloat(item.amount))}
                         </span>
@@ -303,23 +299,44 @@ export function PensionsPayableRecon({
                 <tr className="border-t-2 border-gray-300">
                   <td className="px-4 py-2 text-sm font-medium text-gray-900">
                     BF Total
-                    {bfCleared && (
+                    {totalAllocatedToBF > 0 && (
                       <button
-                        onClick={handleUndoClear}
+                        onClick={handleClearAll}
                         className="ml-3 text-xs text-blue-600 hover:text-blue-800"
                       >
-                        Undo clear
+                        Undo all matches
                       </button>
                     )}
                   </td>
                   <td
                     className={`whitespace-nowrap px-4 py-2 text-right text-sm font-mono font-medium ${
-                      bfCleared ? "text-green-600 line-through" : "text-gray-900"
+                      bfFullyCleared ? "text-green-600 line-through" : "text-gray-900"
                     }`}
                   >
                     {formatCurrency(bfTotal)}
                   </td>
                 </tr>
+                {/* Show matched payments summary */}
+                {totalAllocatedToBF > 0 && (
+                  <tr className="border-t border-gray-200">
+                    <td className="px-4 py-2 text-sm text-gray-600">
+                      Cleared by payments ({Object.keys(matchedPayments).length})
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-green-600">
+                      ({formatCurrency(totalAllocatedToBF)})
+                    </td>
+                  </tr>
+                )}
+                {bfPartiallyCleared && (
+                  <tr className="border-t border-gray-200">
+                    <td className="px-4 py-2 text-sm font-medium text-amber-700">
+                      Residual
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono font-medium text-amber-700">
+                      {formatCurrency(bfResidual)}
+                    </td>
+                  </tr>
+                )}
               </tfoot>
             </table>
           </div>
@@ -331,27 +348,42 @@ export function PensionsPayableRecon({
           </div>
         )}
 
-        {/* BF rounding notice (not for variance case — that shows in closing section) */}
-        {showRoundingButton && !smallVariance && (
+        {/* BF rounding notice — small unmatched BF */}
+        {showBfRoundingButton && (
           <div className="mt-2 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-amber-800">
-                Rounding difference: {formatCurrency(Math.abs(roundingAmount))}
+                Rounding difference: {formatCurrency(Math.abs(bfTotal))}
               </p>
               <p className="text-xs text-amber-600">
-                {unmatchedSmallBf
-                  ? "This small brought-forward balance appears to be a cumulative rounding difference."
-                  : "The payment didn\u2019t exactly clear the brought-forward balance."}
-                {" "}You can add it to closing and journal it off later.
+                This small brought-forward balance appears to be a cumulative
+                rounding difference. You can add it to closing and journal it
+                off later.
               </p>
             </div>
             <button
-              onClick={handleAddRounding}
+              onClick={() =>
+                handleAddRounding(bfTotal, "Rounding difference (brought forward)")
+              }
               disabled={loading}
               className="ml-4 shrink-0 rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
             >
               {loading ? "..." : "Add rounding to closing"}
             </button>
+          </div>
+        )}
+
+        {/* BF residual notice — partial payment leaves a residual that's too big to be rounding */}
+        {bfPartiallyCleared && Math.abs(bfResidual) > 1.0 && (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-medium text-amber-800">
+              BF residual: {formatCurrency(bfResidual)}
+            </p>
+            <p className="text-xs text-amber-600">
+              Payments don&rsquo;t fully clear the brought-forward balance.
+              Match more payments above, or the residual will need to be
+              explained in closing.
+            </p>
           </div>
         )}
       </div>
@@ -392,11 +424,12 @@ export function PensionsPayableRecon({
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {movements.map((mov) => {
-                  const isMatched = mov.id === matchedMovementId;
+                  const isMatched = mov.id in matchedPayments;
                   const debit = parseFloat(mov.debit || "0");
                   const credit = parseFloat(mov.credit || "0");
                   const isPayment = debit > 0 && credit === 0;
-                  const isAutoSuggested = mov.id === autoMatchMovementId;
+                  const isSuggested = mov.id in suggestedPaymentMatches;
+                  const canMatchMore = !bfFullyCleared && bfTotal !== 0;
 
                   return (
                     <tr
@@ -404,7 +437,7 @@ export function PensionsPayableRecon({
                       className={
                         isMatched
                           ? "bg-green-50"
-                          : isAutoSuggested && !bfCleared
+                          : isSuggested && canMatchMore && !isMatched
                             ? "bg-yellow-50"
                             : "hover:bg-gray-50"
                       }
@@ -426,26 +459,33 @@ export function PensionsPayableRecon({
                       </td>
                       <td className="whitespace-nowrap px-4 py-2 text-center text-sm">
                         {isMatched ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-                            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                            Clears brought forward
+                          <span className="inline-flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                              Clears BF
+                            </span>
+                            <button
+                              onClick={() => handleUnmatchFromBF(mov.id)}
+                              className="ml-1 text-xs text-gray-400 hover:text-red-500"
+                              title="Remove match"
+                            >
+                              x
+                            </button>
                           </span>
-                        ) : isPayment && bfTotal !== 0 && !bfCleared ? (
+                        ) : isPayment && canMatchMore ? (
                           <button
-                            onClick={() => handleClearBF(mov.id)}
+                            onClick={() => handleMatchToBF(mov.id)}
                             className={`rounded px-2 py-1 text-xs font-medium ${
-                              isAutoSuggested
+                              isSuggested
                                 ? "animate-pulse bg-yellow-200 text-yellow-800 hover:bg-yellow-300"
                                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                             }`}
                           >
-                            {isAutoSuggested
-                              ? "Match to BF (exact amount)"
-                              : "Match to BF"}
+                            {isSuggested ? "Match to BF (suggested)" : "Match to BF"}
                           </button>
-                        ) : !isMatched && !isPayment ? (
+                        ) : !isPayment ? (
                           <button
                             onClick={() => handleAddFromGL(mov)}
                             disabled={loading}
@@ -453,9 +493,9 @@ export function PensionsPayableRecon({
                           >
                             Add to closing
                           </button>
-                        ) : isPayment ? (
+                        ) : isPayment && bfFullyCleared ? (
                           <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs text-gray-500">
-                            Payment — no action needed
+                            Payment
                           </span>
                         ) : null}
                       </td>
@@ -535,7 +575,7 @@ export function PensionsPayableRecon({
         </form>
 
         {/* Closing items table */}
-        {(initialClosingItems.length > 0 || carryForwardRounding !== 0) && (
+        {(initialClosingItems.length > 0 || carryForwardRounding !== 0 || bfResidualCarryForward !== 0) && (
           <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -590,6 +630,17 @@ export function PensionsPayableRecon({
                     <td />
                   </tr>
                 )}
+                {bfResidualCarryForward !== 0 && (
+                  <tr className="bg-amber-50/50 italic">
+                    <td className="px-4 py-2 text-sm text-gray-500">
+                      BF residual (payment rounding)
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-gray-500">
+                      {formatCurrency(bfResidualCarryForward)}
+                    </td>
+                    <td />
+                  </tr>
+                )}
               </tbody>
               <tfoot className="bg-gray-50">
                 <tr className="border-t-2 border-gray-300">
@@ -631,8 +682,8 @@ export function PensionsPayableRecon({
           </div>
         )}
 
-        {/* Variance rounding notice — shown in closing section */}
-        {smallVariance && (
+        {/* Variance rounding notice */}
+        {showClosingRoundingButton && (
           <div className="mt-2 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-amber-800">
@@ -645,7 +696,7 @@ export function PensionsPayableRecon({
               </p>
             </div>
             <button
-              onClick={handleAddRounding}
+              onClick={() => handleAddRounding(variance, "Rounding difference")}
               disabled={loading}
               className="ml-4 shrink-0 rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
             >
@@ -655,7 +706,7 @@ export function PensionsPayableRecon({
         )}
 
         {/* Empty state */}
-        {initialClosingItems.length === 0 && carryForwardRounding === 0 && (
+        {initialClosingItems.length === 0 && carryForwardRounding === 0 && bfResidualCarryForward === 0 && (
           <div className="mt-3 rounded-lg border border-dashed border-gray-300 p-4">
             <p className="text-sm font-medium text-gray-700">
               No closing items yet
