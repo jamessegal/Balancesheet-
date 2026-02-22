@@ -22,6 +22,11 @@ import { xeroGet } from "@/lib/xero/client";
 type AgingBucket = "current" | "1_30" | "31_60" | "61_90" | "90_plus";
 type RiskFlag = "none" | "watch" | "high";
 
+interface XeroPayment {
+  Date: string;
+  Amount: number;
+}
+
 interface XeroInvoice {
   InvoiceID: string;
   InvoiceNumber: string;
@@ -30,8 +35,11 @@ interface XeroInvoice {
   DueDate: string;
   Total: number;
   AmountDue: number;
+  AmountPaid: number;
   Status: string;
   Type: string;
+  FullyPaidOnDate?: string;
+  Payments?: XeroPayment[];
 }
 
 // ------------------------------------------------------------------
@@ -50,6 +58,51 @@ function parseXeroDate(dateStr: string): string {
     return new Date(Number(msMatch[1])).toISOString().split("T")[0];
   }
   return dateStr.split("T")[0];
+}
+
+/** Calculate the outstanding amount for an invoice as at a specific date,
+ *  by subtracting payments made on or before that date from the invoice total. */
+function calculateOutstandingAtDate(invoice: XeroInvoice, asAtDate: string): number {
+  const payments = invoice.Payments || [];
+  const asAt = new Date(asAtDate + "T23:59:59");
+
+  let paymentsOnOrBefore = 0;
+  for (const payment of payments) {
+    const payDate = new Date(parseXeroDate(payment.Date) + "T00:00:00");
+    if (payDate <= asAt) {
+      paymentsOnOrBefore += payment.Amount;
+    }
+  }
+
+  const outstanding = invoice.Total - paymentsOnOrBefore;
+  return Math.round(outstanding * 100) / 100;
+}
+
+/** Fetch all pages of invoices matching a Xero where filter (handles pagination). */
+async function fetchAllInvoices(
+  connectionId: string,
+  tenantId: string,
+  whereFilter: string
+): Promise<XeroInvoice[]> {
+  const all: XeroInvoice[] = [];
+  let page = 1;
+
+  while (true) {
+    const encoded = encodeURIComponent(whereFilter);
+    const resp = await xeroGet<{ Invoices: XeroInvoice[] }>(
+      connectionId,
+      tenantId,
+      `/Invoices?where=${encoded}&order=DueDate&page=${page}`
+    );
+
+    const invoices = resp.Invoices || [];
+    all.push(...invoices);
+
+    if (invoices.length < 100) break; // Xero pages at 100
+    page++;
+  }
+
+  return all;
 }
 
 /** Calculate aging bucket and days overdue for an invoice as at a given date */
@@ -238,43 +291,67 @@ export async function fetchAgedReceivables(accountId: string) {
   const glBalance = parseFloat(account.balance);
 
   try {
-    // Xero's AgedReceivablesByContact report doesn't reliably give per-invoice
-    // historical "as at" data. Instead we pull all AUTHORISED invoices with
-    // AmountDue > 0 and filter by date to reconstruct the aged debtors listing
-    // as at month end.
+    // To reconstruct the aged debtors listing AS AT month end we need two
+    // sets of invoices:
     //
-    // Endpoints used:
-    //   GET /Invoices?where=Type=="ACCREC" AND Status=="AUTHORISED"
-    //       AND Date<=DateTime(y,m,d)
-    //       AND AmountDue>0
+    // 1. AUTHORISED (still unpaid) invoices dated on/before month end —
+    //    these were definitely outstanding at month end.
+    // 2. PAID invoices dated on/before month end whose FullyPaidOnDate is
+    //    AFTER month end — these were outstanding at month end but have
+    //    since been settled.
     //
-    // Limitation: Xero's Invoices endpoint returns current AmountDue, not
-    // the historical amount due as at month end. For invoices partially paid
-    // between month end and now, the outstanding figure may differ. This is
-    // documented and the user should verify against the Xero aged receivables
-    // report run as at the month end date.
+    // For every invoice we compute the amount that was outstanding at month
+    // end by subtracting payments made on or before that date from the
+    // invoice total (using the Payments array returned by Xero).
 
     const y = period.periodYear;
     const m = period.periodMonth;
     const lastDay = new Date(y, m, 0).getDate();
 
-    // Fetch all unpaid AR invoices dated on or before month end
-    const dateFilter = encodeURIComponent(
-      `Type=="ACCREC" && Status=="AUTHORISED" && Date<=DateTime(${y},${m},${lastDay}) && AmountDue>0`
-    );
-
-    const resp = await xeroGet<{ Invoices: XeroInvoice[] }>(
+    // Query 1: Currently unpaid invoices dated on or before month end
+    const authorisedInvoices = await fetchAllInvoices(
       connection.id,
       connection.xeroTenantId,
-      `/Invoices?where=${dateFilter}&order=DueDate`
+      `Type=="ACCREC" && Status=="AUTHORISED" && Date<=DateTime(${y},${m},${lastDay})`
     );
 
-    const xeroInvoices = (resp.Invoices || []).filter(
-      (inv) => inv.Status !== "DELETED" && inv.Status !== "VOIDED"
+    // Query 2: Invoices fully paid AFTER month end (were outstanding at ME)
+    const nextMonth = m === 12 ? 1 : m + 1;
+    const nextYear = m === 12 ? y + 1 : y;
+    const paidAfterInvoices = await fetchAllInvoices(
+      connection.id,
+      connection.xeroTenantId,
+      `Type=="ACCREC" && Status=="PAID" && Date<=DateTime(${y},${m},${lastDay}) && FullyPaidOnDate>=DateTime(${nextYear},${nextMonth},1)`
     );
 
-    // Calculate aging and totals
-    const invoiceRows = xeroInvoices.map((inv) => {
+    // Combine, deduplicate, remove voided/deleted
+    const invoiceMap = new Map<string, XeroInvoice>();
+    for (const inv of [...authorisedInvoices, ...paidAfterInvoices]) {
+      if (inv.Status !== "DELETED" && inv.Status !== "VOIDED") {
+        invoiceMap.set(inv.InvoiceID, inv);
+      }
+    }
+
+    // Calculate point-in-time amounts and build rows
+    const invoiceRows: {
+      xeroInvoiceId: string;
+      invoiceNumber: string | null;
+      contactName: string;
+      invoiceDate: string;
+      dueDate: string;
+      originalAmount: string;
+      outstandingAmount: string;
+      agingBucket: AgingBucket;
+      daysOverdue: number;
+      requiresComment: boolean;
+    }[] = [];
+
+    for (const inv of invoiceMap.values()) {
+      const outstandingAtME = calculateOutstandingAtDate(inv, meDate);
+
+      // Skip if nothing was outstanding at month end
+      if (outstandingAtME < 0.005) continue;
+
       const invoiceDate = parseXeroDate(inv.Date);
       const dueDate = parseXeroDate(inv.DueDate);
       const { bucket, daysOverdue, requiresComment } = calculateAging(
@@ -282,19 +359,19 @@ export async function fetchAgedReceivables(accountId: string) {
         meDate
       );
 
-      return {
+      invoiceRows.push({
         xeroInvoiceId: inv.InvoiceID,
         invoiceNumber: inv.InvoiceNumber || null,
         contactName: inv.Contact?.Name || "Unknown",
         invoiceDate,
         dueDate,
         originalAmount: String(inv.Total),
-        outstandingAmount: String(inv.AmountDue),
-        agingBucket: bucket as AgingBucket,
+        outstandingAmount: String(outstandingAtME),
+        agingBucket: bucket,
         daysOverdue,
         requiresComment,
-      };
-    });
+      });
+    }
 
     const agedTotal = invoiceRows.reduce(
       (sum, inv) => sum + parseFloat(inv.outstandingAmount),
