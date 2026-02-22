@@ -4,11 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   saveBankReconStatement,
-  fetchUnreconciledBankItems,
   addBankReconItem,
-  bulkAddBankReconItems,
   toggleBankReconItem,
   deleteBankReconItem,
+  uploadBankStatement,
+  deleteBankStatementFile,
 } from "@/app/actions/bank-recon";
 
 interface StatementData {
@@ -96,12 +96,12 @@ export function BankRecon({
 
   // UI state
   const [saving, setSaving] = useState(false);
-  const [fetchingXero, setFetchingXero] = useState(false);
   const [addingManual, setAddingManual] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [xeroFetched, setXeroFetched] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [deletingFile, setDeletingFile] = useState(false);
 
   // Manual item form
   const [manualDesc, setManualDesc] = useState("");
@@ -169,40 +169,40 @@ export function BankRecon({
     setSaving(false);
   }
 
-  async function handleFetchXero() {
-    setFetchingXero(true);
+  async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
     setError(null);
 
-    const result = await fetchUnreconciledBankItems(accountId);
+    const formData = new FormData();
+    formData.set("accountId", accountId);
+    formData.set("file", file);
+
+    const result = await uploadBankStatement(formData);
     if (result && "error" in result && result.error) {
       setError(result.error);
-    } else if (result && "transactions" in result && result.transactions) {
-      if (result.transactions.length === 0) {
-        setError(
-          "No unreconciled transactions found in Xero for this bank account."
-        );
-      } else {
-        // Bulk add the items
-        const addResult = await bulkAddBankReconItems(
-          accountId,
-          result.transactions.map((t: { description: string; amount: number; transactionDate: string; reference: string; xeroTransactionId: string; itemType: string }) => ({
-            description: t.description,
-            amount: t.amount,
-            transactionDate: t.transactionDate,
-            reference: t.reference,
-            xeroTransactionId: t.xeroTransactionId,
-            itemType: t.itemType,
-          }))
-        );
-        if (addResult && "error" in addResult && addResult.error) {
-          setError(addResult.error);
-        } else {
-          setXeroFetched(true);
-          router.refresh();
-        }
-      }
+    } else {
+      router.refresh();
     }
-    setFetchingXero(false);
+    setUploading(false);
+    // Reset the file input
+    e.target.value = "";
+  }
+
+  async function handleDeleteFile() {
+    if (!initialStatement) return;
+    setDeletingFile(true);
+    setError(null);
+
+    const result = await deleteBankStatementFile(initialStatement.id);
+    if (result && "error" in result && result.error) {
+      setError(result.error);
+    } else {
+      router.refresh();
+    }
+    setDeletingFile(false);
   }
 
   async function handleAddManualItem(e: React.FormEvent) {
@@ -436,6 +436,82 @@ export function BankRecon({
         </form>
       </div>
 
+      {/* ── Statement Document Upload ── */}
+      {hasStatement && (
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-medium text-gray-500">
+              Bank Statement Document
+            </label>
+          </div>
+          {initialStatement?.documentFileName ? (
+            <div className="mt-2 flex items-center gap-3">
+              <div className="flex items-center gap-2 rounded-md bg-gray-50 px-3 py-2">
+                <svg
+                  className="h-4 w-4 text-gray-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                  />
+                </svg>
+                <a
+                  href={`/api/bank-statement/${initialStatement.id}/download`}
+                  className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {initialStatement.documentFileName}
+                </a>
+              </div>
+              <button
+                onClick={handleDeleteFile}
+                disabled={deletingFile}
+                className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+              >
+                {deletingFile ? "Removing..." : "Remove"}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-2">
+              <label className="flex cursor-pointer items-center gap-2 rounded-md border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-50">
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+                  />
+                </svg>
+                {uploading
+                  ? "Uploading..."
+                  : "Upload bank statement (PDF, image, or Excel)"}
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.csv"
+                  onChange={handleUploadFile}
+                  disabled={uploading}
+                  className="hidden"
+                />
+              </label>
+              <p className="mt-1 text-xs text-gray-400">
+                For manager review. Max 5MB.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Section 2: Balance Comparison Table ── */}
       {hasStatement && (
         <div>
@@ -521,30 +597,9 @@ export function BankRecon({
       {/* ── Section 3: Reconciling Items (only when mismatched) ── */}
       {hasStatement && !isExactMatch && (
         <div>
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
-              Reconciling Items
-            </h3>
-            <div className="flex gap-2">
-              {!xeroFetched && (
-                <button
-                  onClick={handleFetchXero}
-                  disabled={fetchingXero}
-                  className="rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-                >
-                  {fetchingXero
-                    ? "Fetching from Xero..."
-                    : "Fetch from Xero"}
-                </button>
-              )}
-              {xeroFetched && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-                  Xero items loaded
-                </span>
-              )}
-            </div>
-          </div>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
+            Reconciling Items
+          </h3>
 
           <p className="mt-1 text-xs text-gray-400">
             Tick the items that explain the difference between the GL and bank
@@ -701,8 +756,8 @@ export function BankRecon({
           {initialReconItems.length === 0 && (
             <div className="mt-3 rounded-lg border border-dashed border-gray-300 p-6 text-center">
               <p className="text-sm text-gray-500">
-                No reconciling items yet. Fetch unreconciled transactions from
-                Xero, or add items manually below.
+                No reconciling items yet. Add items manually below to explain
+                the variance.
               </p>
             </div>
           )}

@@ -328,6 +328,8 @@ export const bankReconStatements = pgTable("bank_recon_statements", {
   currency: varchar("currency", { length: 3 }).notNull().default("GBP"),
   documentFileName: text("document_file_name"),
   documentFileKey: text("document_file_key"),
+  documentData: text("document_data"),
+  documentMimeType: text("document_mime_type"),
   status: text("status").notNull().default("pending"),
   toleranceUsed: numeric("tolerance_used", { precision: 18, scale: 2 }).notNull().default("0"),
   notes: text("notes"),
