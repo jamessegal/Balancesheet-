@@ -303,9 +303,7 @@ export default async function ClientDetailPage({
       )}
 
       {/* Reconciliation Periods */}
-      {xeroConnection?.status === "active" && (
-        <PeriodsSection clientId={clientId} isManager={isManager} />
-      )}
+      <PeriodsSection clientId={clientId} isManager={isManager} />
     </div>
   );
 }
