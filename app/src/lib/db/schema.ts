@@ -383,6 +383,12 @@ export const prepaymentStatusEnum = pgEnum("prepayment_status", [
   "cancelled",
 ]);
 
+export const prepaymentSpreadMethodEnum = pgEnum("prepayment_spread_method", [
+  "equal",
+  "daily_proration",
+  "half_month",
+]);
+
 export const prepayments = pgTable(
   "prepayments",
   {
@@ -391,14 +397,15 @@ export const prepayments = pgTable(
       .notNull()
       .references(() => clients.id),
     vendorName: text("vendor_name").notNull(),
-    description: text("description"),
-    nominalAccount: text("nominal_account"),
+    description: text("description").notNull(),
+    nominalAccount: text("nominal_account").notNull(),
     startDate: date("start_date").notNull(),
     endDate: date("end_date").notNull(),
     totalAmount: numeric("total_amount", { precision: 18, scale: 2 }).notNull(),
     currency: varchar("currency", { length: 3 }).notNull().default("GBP"),
     numberOfMonths: integer("number_of_months").notNull(),
     monthlyAmount: numeric("monthly_amount", { precision: 18, scale: 2 }).notNull(),
+    spreadMethod: prepaymentSpreadMethodEnum("spread_method").notNull().default("equal"),
     status: prepaymentStatusEnum("status").notNull().default("active"),
     createdBy: uuid("created_by")
       .notNull()

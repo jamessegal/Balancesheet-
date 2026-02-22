@@ -32,41 +32,65 @@ function calculateMonths(startDate: string, endDate: string): number {
   return Math.max(months, 1);
 }
 
-/**
- * Generate schedule lines for a prepayment.
- * Straight-line allocation with final month true-up.
- */
-function generateScheduleLines(
-  prepaymentId: string,
-  startDate: string,
-  totalAmount: number,
-  numberOfMonths: number
-): {
+type SpreadMethod = "equal" | "daily_proration" | "half_month";
+
+type ScheduleLineInput = {
   prepaymentId: string;
   monthEndDate: string;
   openingBalance: string;
   monthlyExpense: string;
   closingBalance: string;
   originalAmount: string;
-}[] {
+};
+
+/** Count days in a given month (1-based). */
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate();
+}
+
+/**
+ * Generate schedule lines for a prepayment using the specified spread method.
+ *
+ * - "equal": straight-line, same amount every month, last month true-up
+ * - "daily_proration": pro-rata by actual days covered in each month
+ * - "half_month": partial months get half allocation, full months get full
+ */
+function generateScheduleLines(
+  prepaymentId: string,
+  startDate: string,
+  endDate: string,
+  totalAmount: number,
+  numberOfMonths: number,
+  spreadMethod: SpreadMethod
+): ScheduleLineInput[] {
+  switch (spreadMethod) {
+    case "daily_proration":
+      return generateDailyProration(prepaymentId, startDate, endDate, totalAmount, numberOfMonths);
+    case "half_month":
+      return generateHalfMonth(prepaymentId, startDate, endDate, totalAmount, numberOfMonths);
+    case "equal":
+    default:
+      return generateEqual(prepaymentId, startDate, totalAmount, numberOfMonths);
+  }
+}
+
+/** Equal spread: same amount every month with last month true-up. */
+function generateEqual(
+  prepaymentId: string,
+  startDate: string,
+  totalAmount: number,
+  numberOfMonths: number
+): ScheduleLineInput[] {
   const monthlyAmount = Math.round((totalAmount / numberOfMonths) * 100) / 100;
-  const lines: {
-    prepaymentId: string;
-    monthEndDate: string;
-    openingBalance: string;
-    monthlyExpense: string;
-    closingBalance: string;
-    originalAmount: string;
-  }[] = [];
+  const lines: ScheduleLineInput[] = [];
 
   const start = new Date(startDate);
   let currentYear = start.getFullYear();
-  let currentMonth = start.getMonth() + 1; // 1-based
+  let currentMonth = start.getMonth() + 1;
   let openingBalance = totalAmount;
 
   for (let i = 0; i < numberOfMonths; i++) {
     const isLastMonth = i === numberOfMonths - 1;
-    // Final month true-up: ensure total amortisation equals original amount exactly
     const expense = isLastMonth
       ? Math.round(openingBalance * 100) / 100
       : monthlyAmount;
@@ -82,12 +106,159 @@ function generateScheduleLines(
     });
 
     openingBalance = closingBal;
-
-    // Advance to next month
     currentMonth++;
     if (currentMonth > 12) {
       currentMonth = 1;
       currentYear++;
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Daily proration: allocate based on actual days covered in each month.
+ * e.g. start 9 Jan, end 8 Apr → Jan has 23 days, Feb 28, Mar 31, Apr 8 = 90 total.
+ */
+function generateDailyProration(
+  prepaymentId: string,
+  startDate: string,
+  endDate: string,
+  totalAmount: number,
+  numberOfMonths: number
+): ScheduleLineInput[] {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const lines: ScheduleLineInput[] = [];
+
+  // Calculate days per month
+  const monthDays: { year: number; month: number; days: number }[] = [];
+  let curYear = start.getFullYear();
+  let curMonth = start.getMonth() + 1;
+
+  for (let i = 0; i < numberOfMonths; i++) {
+    const totalDaysInMonth = daysInMonth(curYear, curMonth);
+    let days: number;
+
+    if (i === 0 && i === numberOfMonths - 1) {
+      // Single month: start day to end day
+      days = end.getDate() - start.getDate() + 1;
+    } else if (i === 0) {
+      // First month: from start date to end of month
+      days = totalDaysInMonth - start.getDate() + 1;
+    } else if (i === numberOfMonths - 1) {
+      // Last month: from 1st to end date
+      days = end.getDate();
+    } else {
+      // Full month
+      days = totalDaysInMonth;
+    }
+
+    monthDays.push({ year: curYear, month: curMonth, days: Math.max(days, 0) });
+    curMonth++;
+    if (curMonth > 12) {
+      curMonth = 1;
+      curYear++;
+    }
+  }
+
+  const totalDays = monthDays.reduce((sum, m) => sum + m.days, 0);
+  let openingBalance = totalAmount;
+
+  for (let i = 0; i < monthDays.length; i++) {
+    const m = monthDays[i];
+    const isLast = i === monthDays.length - 1;
+    // Last month gets remainder to avoid rounding drift
+    const expense = isLast
+      ? Math.round(openingBalance * 100) / 100
+      : Math.round((totalAmount * m.days / totalDays) * 100) / 100;
+    const closingBal = Math.round((openingBalance - expense) * 100) / 100;
+
+    lines.push({
+      prepaymentId,
+      monthEndDate: monthEndDate(m.year, m.month),
+      openingBalance: openingBalance.toFixed(2),
+      monthlyExpense: expense.toFixed(2),
+      closingBalance: closingBal.toFixed(2),
+      originalAmount: expense.toFixed(2),
+    });
+
+    openingBalance = closingBal;
+  }
+
+  return lines;
+}
+
+/**
+ * Half-month convention: partial months get half a monthly allocation,
+ * full months get a full monthly allocation.
+ *
+ * A month is "partial" if the start date is not the 1st (first month)
+ * or the end date is not the last day of the month (last month).
+ */
+function generateHalfMonth(
+  prepaymentId: string,
+  startDate: string,
+  endDate: string,
+  totalAmount: number,
+  numberOfMonths: number
+): ScheduleLineInput[] {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const lines: ScheduleLineInput[] = [];
+
+  // Determine which months are partial
+  const firstMonthPartial = start.getDate() > 1;
+  const lastDayOfEndMonth = daysInMonth(end.getFullYear(), end.getMonth() + 1);
+  const lastMonthPartial = numberOfMonths > 1 && end.getDate() < lastDayOfEndMonth;
+
+  // Calculate effective month units (partial = 0.5, full = 1)
+  let effectiveMonths = 0;
+  for (let i = 0; i < numberOfMonths; i++) {
+    if (i === 0 && firstMonthPartial) {
+      effectiveMonths += 0.5;
+    } else if (i === numberOfMonths - 1 && lastMonthPartial) {
+      effectiveMonths += 0.5;
+    } else {
+      effectiveMonths += 1;
+    }
+  }
+
+  const perUnit = totalAmount / effectiveMonths;
+  let curYear = start.getFullYear();
+  let curMonth = start.getMonth() + 1;
+  let openingBalance = totalAmount;
+
+  for (let i = 0; i < numberOfMonths; i++) {
+    const isLast = i === numberOfMonths - 1;
+    let weight: number;
+    if (i === 0 && firstMonthPartial) {
+      weight = 0.5;
+    } else if (isLast && lastMonthPartial) {
+      weight = 0.5;
+    } else {
+      weight = 1;
+    }
+
+    const expense = isLast
+      ? Math.round(openingBalance * 100) / 100
+      : Math.round((perUnit * weight) * 100) / 100;
+    const closingBal = Math.round((openingBalance - expense) * 100) / 100;
+
+    lines.push({
+      prepaymentId,
+      monthEndDate: monthEndDate(curYear, curMonth),
+      openingBalance: openingBalance.toFixed(2),
+      monthlyExpense: expense.toFixed(2),
+      closingBalance: closingBal.toFixed(2),
+      originalAmount: expense.toFixed(2),
+    });
+
+    openingBalance = closingBal;
+    curMonth++;
+    if (curMonth > 12) {
+      curMonth = 1;
+      curYear++;
     }
   }
 
@@ -102,14 +273,15 @@ export async function createPrepayment(formData: FormData) {
 
   const clientId = formData.get("clientId") as string;
   const vendorName = formData.get("vendorName") as string;
-  const description = (formData.get("description") as string) || null;
-  const nominalAccount = (formData.get("nominalAccount") as string) || null;
+  const description = formData.get("description") as string;
+  const nominalAccount = formData.get("nominalAccount") as string;
   const startDate = formData.get("startDate") as string;
   const endDate = formData.get("endDate") as string;
   const totalAmountStr = formData.get("totalAmount") as string;
   const periodId = formData.get("periodId") as string;
+  const spreadMethod = (formData.get("spreadMethod") as SpreadMethod) || "equal";
 
-  if (!clientId || !vendorName || !startDate || !endDate || !totalAmountStr) {
+  if (!clientId || !vendorName || !description || !nominalAccount || !startDate || !endDate || !totalAmountStr) {
     return { error: "Missing required fields" };
   }
 
@@ -139,6 +311,7 @@ export async function createPrepayment(formData: FormData) {
       totalAmount: totalAmount.toFixed(2),
       numberOfMonths,
       monthlyAmount: monthlyAmount.toFixed(2),
+      spreadMethod,
       createdBy: session.user.id,
     })
     .returning();
@@ -147,8 +320,10 @@ export async function createPrepayment(formData: FormData) {
   const lines = generateScheduleLines(
     prepayment.id,
     startDate,
+    endDate,
     totalAmount,
-    numberOfMonths
+    numberOfMonths,
+    spreadMethod
   );
 
   if (lines.length > 0) {
