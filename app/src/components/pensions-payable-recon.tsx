@@ -75,6 +75,32 @@ export function PensionsPayableRecon({
   );
   const variance = closingBalance - closingTotal;
 
+  const totalDebits = movements.reduce(
+    (s, t) => s + parseFloat(t.debit || "0"),
+    0
+  );
+  const totalCredits = movements.reduce(
+    (s, t) => s + parseFloat(t.credit || "0"),
+    0
+  );
+  const netMovement = totalCredits - totalDebits;
+
+  // Detect BF rounding: BF exists, there's a payment that is close but not
+  // exact, or BF is so small no payment matches at all. If the remaining
+  // BF amount after best-match payment is tiny, offer to write it off.
+  const matchedDebit = matchedMovement
+    ? parseFloat(matchedMovement.debit || "0")
+    : 0;
+  const bfRounding = bfCleared
+    ? Math.abs(bfTotal) - matchedDebit // e.g. BF 5306.91 matched to 5306.91 → 0
+    : 0;
+  // Small unmatched BF with no matching payment — the BF itself is the rounding
+  const unmatchedSmallBf =
+    !bfCleared && bfTotal !== 0 && Math.abs(bfTotal) <= 1.0;
+  const showRoundingButton =
+    (bfCleared && Math.abs(bfRounding) >= 0.01) || unmatchedSmallBf;
+  const roundingAmount = unmatchedSmallBf ? bfTotal : bfRounding;
+
   function handleClearBF(movementId: string) {
     setMatchedMovementId(movementId);
     setBfCleared(true);
@@ -83,6 +109,29 @@ export function PensionsPayableRecon({
   function handleUndoClear() {
     setMatchedMovementId(null);
     setBfCleared(false);
+  }
+
+  // Add BF rounding difference as a closing item
+  async function handleAddRounding() {
+    setLoading(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.set("accountId", accountId);
+    formData.set("description", "Rounding difference (brought forward)");
+    formData.set("amount", String(roundingAmount));
+
+    const result = await addReconciliationItem(formData);
+    if (result && "error" in result && result.error) {
+      setError(result.error);
+    } else {
+      // If it was an unmatched small BF, mark it as cleared now
+      if (unmatchedSmallBf) {
+        setBfCleared(true);
+      }
+      router.refresh();
+    }
+    setLoading(false);
   }
 
   // Add a GL transaction as a closing item
@@ -228,6 +277,30 @@ export function PensionsPayableRecon({
             </p>
           </div>
         )}
+
+        {/* Rounding notice */}
+        {showRoundingButton && (
+          <div className="mt-2 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-amber-800">
+                Rounding difference: {formatCurrency(Math.abs(roundingAmount))}
+              </p>
+              <p className="text-xs text-amber-600">
+                {unmatchedSmallBf
+                  ? "This small brought-forward balance appears to be a cumulative rounding difference."
+                  : "The payment didn\u2019t exactly clear the brought-forward balance."}
+                {" "}You can add it to closing and journal it off later.
+              </p>
+            </div>
+            <button
+              onClick={handleAddRounding}
+              disabled={loading}
+              className="ml-4 shrink-0 rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {loading ? "..." : "Add rounding to closing"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Section 2: Movements ── */}
@@ -338,7 +411,7 @@ export function PensionsPayableRecon({
                 })}
               </tbody>
               <tfoot className="bg-gray-50">
-                <tr>
+                <tr className="border-t-2 border-gray-300">
                   <td
                     colSpan={3}
                     className="px-4 py-2 text-sm font-medium text-gray-900"
@@ -346,22 +419,14 @@ export function PensionsPayableRecon({
                     Total
                   </td>
                   <td className="px-4 py-2 text-right text-sm font-mono font-medium text-gray-900">
-                    {formatCurrency(
-                      movements.reduce(
-                        (s, t) => s + parseFloat(t.debit || "0"),
-                        0
-                      )
-                    )}
+                    {formatCurrency(totalDebits)}
                   </td>
                   <td className="px-4 py-2 text-right text-sm font-mono font-medium text-gray-900">
-                    {formatCurrency(
-                      movements.reduce(
-                        (s, t) => s + parseFloat(t.credit || "0"),
-                        0
-                      )
-                    )}
+                    {formatCurrency(totalCredits)}
                   </td>
-                  <td />
+                  <td className="whitespace-nowrap px-4 py-2 text-center text-xs font-medium text-gray-500">
+                    Net: {formatCurrency(netMovement)}
+                  </td>
                 </tr>
               </tfoot>
             </table>
