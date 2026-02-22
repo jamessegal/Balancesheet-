@@ -548,6 +548,133 @@ export async function deleteBankReconItem(itemId: string) {
 }
 
 // ------------------------------------------------------------------
+// Upload a bank statement document (stored as base64 in DB)
+// ------------------------------------------------------------------
+export async function uploadBankStatement(formData: FormData) {
+  await requireRole("junior");
+
+  const accountId = formData.get("accountId") as string;
+  const file = formData.get("file") as File | null;
+
+  if (!accountId || !file) {
+    return { error: "Account ID and file are required" };
+  }
+
+  // Validate file size (5MB max)
+  if (file.size > 5 * 1024 * 1024) {
+    return { error: "File must be smaller than 5MB" };
+  }
+
+  // Validate file type
+  const allowedTypes = [
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "text/csv",
+  ];
+  if (!allowedTypes.includes(file.type)) {
+    return { error: "File type not supported. Use PDF, PNG, JPG, Excel or CSV." };
+  }
+
+  const [statement] = await db
+    .select()
+    .from(bankReconStatements)
+    .where(eq(bankReconStatements.reconAccountId, accountId))
+    .limit(1);
+
+  if (!statement) {
+    return { error: "Save the statement details first before uploading a document" };
+  }
+
+  // Read file as base64
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const base64 = buffer.toString("base64");
+
+  await db
+    .update(bankReconStatements)
+    .set({
+      documentFileName: file.name,
+      documentData: base64,
+      documentMimeType: file.type,
+      updatedAt: new Date(),
+    })
+    .where(eq(bankReconStatements.id, statement.id));
+
+  const [account] = await db
+    .select()
+    .from(reconciliationAccounts)
+    .where(eq(reconciliationAccounts.id, accountId))
+    .limit(1);
+
+  if (account) {
+    const [period] = await db
+      .select()
+      .from(reconciliationPeriods)
+      .where(eq(reconciliationPeriods.id, account.periodId))
+      .limit(1);
+
+    if (period) {
+      revalidatePath(
+        `/clients/${period.clientId}/periods/${period.id}/accounts/${accountId}`
+      );
+    }
+  }
+
+  return { success: true };
+}
+
+// ------------------------------------------------------------------
+// Delete a bank statement document
+// ------------------------------------------------------------------
+export async function deleteBankStatementFile(statementId: string) {
+  await requireRole("junior");
+
+  const [statement] = await db
+    .select()
+    .from(bankReconStatements)
+    .where(eq(bankReconStatements.id, statementId))
+    .limit(1);
+
+  if (!statement) {
+    return { error: "Statement not found" };
+  }
+
+  await db
+    .update(bankReconStatements)
+    .set({
+      documentFileName: null,
+      documentData: null,
+      documentMimeType: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(bankReconStatements.id, statementId));
+
+  const [account] = await db
+    .select()
+    .from(reconciliationAccounts)
+    .where(eq(reconciliationAccounts.id, statement.reconAccountId))
+    .limit(1);
+
+  if (account) {
+    const [period] = await db
+      .select()
+      .from(reconciliationPeriods)
+      .where(eq(reconciliationPeriods.id, account.periodId))
+      .limit(1);
+
+    if (period) {
+      revalidatePath(
+        `/clients/${period.clientId}/periods/${period.id}/accounts/${account.id}`
+      );
+    }
+  }
+
+  return { success: true };
+}
+
+// ------------------------------------------------------------------
 // Internal: recalculate recon status based on ticked items
 // ------------------------------------------------------------------
 async function recalculateReconStatus(accountId: string) {

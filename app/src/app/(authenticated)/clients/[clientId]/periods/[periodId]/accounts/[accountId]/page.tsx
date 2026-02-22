@@ -237,7 +237,7 @@ export default async function AccountDetailPage({
       .limit(1);
     if (config) {
       reconModule = config.reconModule;
-    } else if (account.accountType === "BANK") {
+    } else if (account.accountType?.toUpperCase() === "BANK") {
       // Auto-detect: bank accounts use bank reconciliation by default
       reconModule = "bank";
     }
@@ -245,7 +245,7 @@ export default async function AccountDetailPage({
   } catch (configErr) {
     // Config table may not exist yet
     console.error(`[recon-module] Config lookup failed for ${account.accountName}:`, configErr);
-    if (account.accountType === "BANK") {
+    if (account.accountType?.toUpperCase() === "BANK") {
       reconModule = "bank";
     }
   }
