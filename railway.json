@@ -2,11 +2,11 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "cd app && pnpm install && pnpm build",
+    "buildCommand": "cd app && pnpm install && pnpm db:seed-test && pnpm build",
     "watchPatterns": ["app/**"]
   },
   "deploy": {
-    "startCommand": "cd app && pnpm db:seed-test && pnpm start",
+    "startCommand": "cd app && pnpm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
