@@ -68,6 +68,33 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_prepayment_schedule_month ON prepayment_schedule_lines(month_end_date)
   \`);
 
+  // Add spread_method enum and column
+  await sql.unsafe(\`
+    DO \\\$\\\$ BEGIN
+      CREATE TYPE prepayment_spread_method AS ENUM ('equal', 'daily_proration', 'half_month');
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END \\\$\\\$;
+  \`);
+  await sql.unsafe(\`
+    ALTER TABLE prepayments ADD COLUMN IF NOT EXISTS spread_method prepayment_spread_method NOT NULL DEFAULT 'equal'
+  \`);
+
+  // Make description and nominal_account NOT NULL
+  await sql.unsafe(\`UPDATE prepayments SET description = '' WHERE description IS NULL\`);
+  await sql.unsafe(\`UPDATE prepayments SET nominal_account = '' WHERE nominal_account IS NULL\`);
+  await sql.unsafe(\`
+    DO \\\$\\\$ BEGIN
+      ALTER TABLE prepayments ALTER COLUMN description SET NOT NULL;
+    EXCEPTION WHEN others THEN NULL;
+    END \\\$\\\$;
+  \`);
+  await sql.unsafe(\`
+    DO \\\$\\\$ BEGIN
+      ALTER TABLE prepayments ALTER COLUMN nominal_account SET NOT NULL;
+    EXCEPTION WHEN others THEN NULL;
+    END \\\$\\\$;
+  \`);
+
   console.log('Schema migration complete');
   await sql.end();
 }
