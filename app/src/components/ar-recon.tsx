@@ -801,9 +801,9 @@ export function ARRecon({
             {formatDateGB(meDate)}.
           </p>
           <p className="mt-3 text-xs text-gray-400">
-            This will retrieve all unpaid ACCREC invoices from Xero dated on or
-            before {formatDateGB(meDate)} and calculate aging
-            buckets based on due dates.
+            This will retrieve all ACCREC invoices that were outstanding as at{" "}
+            {formatDateGB(meDate)}, including invoices since paid,
+            and calculate aging buckets based on due dates.
           </p>
         </div>
       )}
@@ -811,11 +811,12 @@ export function ARRecon({
       {/* Xero API note */}
       {hasData && (
         <div className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-400">
-          <strong>Note:</strong> Invoice amounts are fetched from Xero&apos;s
-          Invoices API (GET /Invoices). Outstanding amounts reflect current
-          AmountDue values. For invoices partially paid after{" "}
-          {formatDateGB(meDate)}, verify against the Xero Aged
-          Receivables report run as at month end.
+          <strong>Note:</strong> Outstanding amounts reflect point-in-time
+          balances as at {formatDateGB(meDate)}, calculated from
+          invoice totals minus payments received on or before that date.
+          Invoices paid since month end are included at their month-end
+          balance. Credit note allocations dated after month end may need
+          manual verification.
         </div>
       )}
     </div>
