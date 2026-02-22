@@ -28,6 +28,44 @@ async function seedTestDataIfNeeded() {
     // Run schema migrations (idempotent)
     await client`ALTER TABLE reconciliation_items ADD COLUMN IF NOT EXISTS item_date date`;
     await client`ALTER TABLE reconciliation_items ADD COLUMN IF NOT EXISTS gl_transaction_id uuid REFERENCES gl_transactions(id)`;
+
+    // Bank reconciliation tables
+    await client`
+      CREATE TABLE IF NOT EXISTS bank_recon_statements (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        recon_account_id uuid NOT NULL REFERENCES reconciliation_accounts(id) UNIQUE,
+        statement_date date NOT NULL,
+        statement_balance numeric(18, 2) NOT NULL,
+        gl_balance numeric(18, 2) NOT NULL,
+        currency varchar(3) NOT NULL DEFAULT 'GBP',
+        document_file_name text,
+        document_file_key text,
+        status text NOT NULL DEFAULT 'pending',
+        tolerance_used numeric(18, 2) NOT NULL DEFAULT '0',
+        notes text,
+        confirmed_by uuid REFERENCES users(id),
+        confirmed_at timestamptz,
+        created_by uuid NOT NULL REFERENCES users(id),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
+    await client`
+      CREATE TABLE IF NOT EXISTS bank_recon_items (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        recon_account_id uuid NOT NULL REFERENCES reconciliation_accounts(id),
+        item_type text NOT NULL DEFAULT 'other',
+        description text NOT NULL,
+        amount numeric(18, 2) NOT NULL,
+        transaction_date date,
+        reference text,
+        xero_transaction_id text,
+        source text NOT NULL DEFAULT 'manual',
+        is_ticked boolean NOT NULL DEFAULT false,
+        created_by uuid NOT NULL REFERENCES users(id),
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`;
+    await client`CREATE INDEX IF NOT EXISTS idx_bank_recon_items_account ON bank_recon_items(recon_account_id)`;
+    await client`CREATE INDEX IF NOT EXISTS idx_bank_recon_statements_account ON bank_recon_statements(recon_account_id)`;
     console.log("[seed] Schema migrations applied.");
 
     // Check if test clients already exist
@@ -327,7 +365,120 @@ async function seedTestDataIfNeeded() {
       ],
     });
 
-    console.log("[seed] Test data seeded successfully (3 companies).");
+    // ══════════════════════════════════════════════════════════════
+    // BANK RECONCILIATION TEST DATA
+    // ══════════════════════════════════════════════════════════════
+
+    // Delta Trading Ltd — GBP & USD bank accounts that match exactly
+    const [deltaClient] = await db
+      .insert(schema.clients)
+      .values({ name: "Delta Trading Ltd", code: "DELTA", createdBy: userId })
+      .onConflictDoNothing()
+      .returning();
+
+    if (deltaClient) {
+      console.log(`[seed]   Created client: Delta Trading Ltd`);
+
+      for (const month of [1, 2]) {
+        const [period] = await db
+          .insert(schema.reconciliationPeriods)
+          .values({
+            clientId: deltaClient.id,
+            periodYear: 2026,
+            periodMonth: month,
+            status: "in_progress",
+            openedBy: userId,
+          })
+          .returning();
+
+        const gbpBal: Record<number, string> = { 1: "45230.67", 2: "52841.33" };
+        const gbpPrior: Record<number, string | null> = { 1: null, 2: "45230.67" };
+        await db.insert(schema.reconciliationAccounts).values({
+          periodId: period.id,
+          xeroAccountId: "test-bank-delta-gbp",
+          accountCode: "090",
+          accountName: "Business Current Account",
+          accountType: "BANK",
+          balance: gbpBal[month],
+          priorBalance: gbpPrior[month],
+          status: "in_progress",
+        });
+
+        const usdBal: Record<number, string> = { 1: "18500.00", 2: "22150.50" };
+        const usdPrior: Record<number, string | null> = { 1: null, 2: "18500.00" };
+        await db.insert(schema.reconciliationAccounts).values({
+          periodId: period.id,
+          xeroAccountId: "test-bank-delta-usd",
+          accountCode: "091",
+          accountName: "USD Dollar Account",
+          accountType: "BANK",
+          balance: usdBal[month],
+          priorBalance: usdPrior[month],
+          status: "in_progress",
+        });
+      }
+
+      await db.insert(schema.accountReconConfig).values([
+        {
+          clientId: deltaClient.id,
+          xeroAccountId: "test-bank-delta-gbp",
+          accountName: "Business Current Account",
+          reconModule: "bank",
+        },
+        {
+          clientId: deltaClient.id,
+          xeroAccountId: "test-bank-delta-usd",
+          accountName: "USD Dollar Account",
+          reconModule: "bank",
+        },
+      ]);
+    }
+
+    // Echo Imports Ltd — bank with mismatches (unpresented cheques)
+    const [echoClient] = await db
+      .insert(schema.clients)
+      .values({ name: "Echo Imports Ltd", code: "ECHO", createdBy: userId })
+      .onConflictDoNothing()
+      .returning();
+
+    if (echoClient) {
+      console.log(`[seed]   Created client: Echo Imports Ltd`);
+
+      for (const month of [1, 2]) {
+        const [period] = await db
+          .insert(schema.reconciliationPeriods)
+          .values({
+            clientId: echoClient.id,
+            periodYear: 2026,
+            periodMonth: month,
+            status: "in_progress",
+            openedBy: userId,
+          })
+          .returning();
+
+        const balances: Record<number, string> = { 1: "67890.50", 2: "71250.00" };
+        const prior: Record<number, string | null> = { 1: null, 2: "67890.50" };
+        await db.insert(schema.reconciliationAccounts).values({
+          periodId: period.id,
+          xeroAccountId: "test-bank-echo-gbp",
+          accountCode: "090",
+          accountName: "Business Current Account",
+          accountType: "BANK",
+          balance: balances[month],
+          priorBalance: prior[month],
+          status: "in_progress",
+        });
+      }
+
+      await db.insert(schema.accountReconConfig).values({
+        clientId: echoClient.id,
+        xeroAccountId: "test-bank-echo-gbp",
+        accountName: "Business Current Account",
+        reconModule: "bank",
+      });
+    }
+
+    console.log("[seed] Test data seeded successfully (5 companies: 3 pensions + 2 bank).");
     await client.end();
   } catch (err) {
     console.error("[seed] Test seed failed:", err);

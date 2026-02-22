@@ -20,7 +20,9 @@ import { PullTransactionsButton } from "@/components/pull-transactions";
 import { AddNoteForm } from "@/components/add-note";
 import { ReconciliationSchedule } from "@/components/reconciliation-schedule";
 import { PensionsPayableRecon } from "@/components/pensions-payable-recon";
+import { BankRecon } from "@/components/bank-recon";
 import { loadPensionsPayableData } from "@/app/actions/recon-modules";
+import { loadBankReconData } from "@/app/actions/bank-recon";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -242,6 +244,11 @@ export default async function AccountDetailPage({
   let pensionsData: Awaited<ReturnType<typeof loadPensionsPayableData>> | null = null;
   if (reconModule === "pensions_payable") {
     pensionsData = await loadPensionsPayableData(accountId);
+  }
+
+  let bankReconData: Awaited<ReturnType<typeof loadBankReconData>> | null = null;
+  if (reconModule === "bank") {
+    bankReconData = await loadBankReconData(accountId);
   }
 
   // Fetch all periods for this client to find prev/next account for this same xeroAccountId
@@ -630,6 +637,18 @@ export default async function AccountDetailPage({
               closingBalance={balance}
               periodYear={period.periodYear}
               periodMonth={period.periodMonth}
+            />
+          ) : reconModule === "bank" &&
+            bankReconData &&
+            !("error" in bankReconData) ? (
+            <BankRecon
+              accountId={accountId}
+              glBalance={bankReconData.glBalance}
+              monthEndDate={bankReconData.monthEndDate}
+              periodYear={bankReconData.periodYear}
+              periodMonth={bankReconData.periodMonth}
+              statement={bankReconData.statement}
+              reconItems={bankReconData.reconItems}
             />
           ) : (
             <>

@@ -11,6 +11,7 @@ import {
   date,
   jsonb,
   index,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 export const xeroConnectionStatusEnum = pgEnum("xero_connection_status", [
@@ -312,6 +313,65 @@ export const glTransactions = pgTable(
 );
 
 // ============================================================
+// BANK RECONCILIATION
+// ============================================================
+
+export const bankReconStatements = pgTable("bank_recon_statements", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  reconAccountId: uuid("recon_account_id")
+    .notNull()
+    .references(() => reconciliationAccounts.id)
+    .unique(),
+  statementDate: date("statement_date").notNull(),
+  statementBalance: numeric("statement_balance", { precision: 18, scale: 2 }).notNull(),
+  glBalance: numeric("gl_balance", { precision: 18, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("GBP"),
+  documentFileName: text("document_file_name"),
+  documentFileKey: text("document_file_key"),
+  status: text("status").notNull().default("pending"),
+  toleranceUsed: numeric("tolerance_used", { precision: 18, scale: 2 }).notNull().default("0"),
+  notes: text("notes"),
+  confirmedBy: uuid("confirmed_by").references(() => users.id),
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const bankReconItems = pgTable(
+  "bank_recon_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    reconAccountId: uuid("recon_account_id")
+      .notNull()
+      .references(() => reconciliationAccounts.id),
+    itemType: text("item_type").notNull().default("other"),
+    description: text("description").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    transactionDate: date("transaction_date"),
+    reference: text("reference"),
+    xeroTransactionId: text("xero_transaction_id"),
+    source: text("source").notNull().default("manual"),
+    isTicked: boolean("is_ticked").notNull().default(false),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_bank_recon_items_account").on(table.reconAccountId),
+  ]
+);
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -337,3 +397,7 @@ export type GLTransaction = typeof glTransactions.$inferSelect;
 export type NewGLTransaction = typeof glTransactions.$inferInsert;
 export type AccountReconConfig = typeof accountReconConfig.$inferSelect;
 export type NewAccountReconConfig = typeof accountReconConfig.$inferInsert;
+export type BankReconStatement = typeof bankReconStatements.$inferSelect;
+export type NewBankReconStatement = typeof bankReconStatements.$inferInsert;
+export type BankReconItem = typeof bankReconItems.$inferSelect;
+export type NewBankReconItem = typeof bankReconItems.$inferInsert;
