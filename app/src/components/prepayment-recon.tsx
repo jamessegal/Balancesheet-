@@ -13,6 +13,8 @@ import {
 // Types
 // ------------------------------------------------------------------
 
+type SpreadMethod = "equal" | "daily_proration" | "half_month";
+
 interface PrepaymentRow {
   id: string;
   vendorName: string;
@@ -23,6 +25,7 @@ interface PrepaymentRow {
   totalAmount: string;
   numberOfMonths: number;
   monthlyAmount: string;
+  spreadMethod?: SpreadMethod;
   status: "active" | "fully_amortised" | "cancelled";
 }
 
@@ -83,6 +86,7 @@ export function PrepaymentRecon({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
+  const [spreadMethod, setSpreadMethod] = useState<SpreadMethod>("equal");
 
   // Filter out cancelled prepayments
   const activePrepayments = initialPrepayments.filter(
@@ -146,7 +150,7 @@ export function PrepaymentRecon({
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!vendorName.trim() || !startDate || !endDate || !totalAmount) return;
+    if (!vendorName.trim() || !description.trim() || !nominalAccount.trim() || !startDate || !endDate || !totalAmount) return;
 
     setLoading(true);
     setError(null);
@@ -159,6 +163,7 @@ export function PrepaymentRecon({
     formData.set("startDate", startDate);
     formData.set("endDate", endDate);
     formData.set("totalAmount", totalAmount);
+    formData.set("spreadMethod", spreadMethod);
     formData.set("periodId", periodId);
 
     const result = await createPrepayment(formData);
@@ -171,6 +176,7 @@ export function PrepaymentRecon({
       setStartDate("");
       setEndDate("");
       setTotalAmount("");
+      setSpreadMethod("equal");
       setShowForm(false);
       router.refresh();
     }
@@ -269,143 +275,6 @@ export function PrepaymentRecon({
         </div>
       )}
 
-      {/* Add Prepayment Form */}
-      <div className="rounded-lg border border-gray-200 bg-white">
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
-          <span>Add Prepayment</span>
-          <svg
-            className={`h-5 w-5 transition-transform ${showForm ? "rotate-180" : ""}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        {showForm && (
-          <form onSubmit={handleCreate} className="border-t border-gray-200 p-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-500">
-                  Vendor *
-                </label>
-                <input
-                  type="text"
-                  value={vendorName}
-                  onChange={(e) => setVendorName(e.target.value)}
-                  placeholder="e.g. AWS"
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">
-                  Description
-                </label>
-                <input
-                  type="text"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="e.g. Annual hosting subscription"
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">
-                  Account
-                </label>
-                <input
-                  type="text"
-                  value={nominalAccount}
-                  onChange={(e) => setNominalAccount(e.target.value)}
-                  placeholder="e.g. 1700"
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">
-                  Start Date *
-                </label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">
-                  End Date *
-                </label>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500">
-                  Total Amount *
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={totalAmount}
-                  onChange={(e) => setTotalAmount(e.target.value)}
-                  placeholder="0.00"
-                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-right font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  required
-                />
-              </div>
-            </div>
-            {/* Preview calculation */}
-            {startDate && endDate && totalAmount && new Date(endDate) > new Date(startDate) && (
-              <div className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                {(() => {
-                  const months = calcMonths(startDate, endDate);
-                  const amt = parseFloat(totalAmount);
-                  const monthly = amt / months;
-                  return (
-                    <>
-                      <span className="font-medium">{months} months</span>
-                      {" | "}
-                      <span className="font-mono">
-                        {formatCurrency(monthly)}/month
-                      </span>
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {loading ? "Creating..." : "Create Prepayment"}
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-
       {/* Prepayment Schedule Grid */}
       {activePrepayments.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
@@ -450,7 +319,7 @@ export function PrepaymentRecon({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {activePrepayments.map((p) => {
+              {activePrepayments.map((p, idx) => {
                 const pLines = lineMap.get(p.id);
                 // Opening balance for the grid = balance at start of viewing period
                 const firstVisibleLine = pLines?.get(monthColumns[0]);
@@ -472,14 +341,16 @@ export function PrepaymentRecon({
                       return 0;
                     })();
 
+                const rowBg = idx % 2 === 1 ? "bg-gray-50" : "bg-white";
+
                 return (
                   <tr
                     key={p.id}
-                    className={`hover:bg-gray-50 ${
+                    className={`hover:bg-blue-50/40 ${rowBg} ${
                       p.status === "fully_amortised" ? "opacity-60" : ""
                     }`}
                   >
-                    <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-gray-900 whitespace-nowrap">
+                    <td className={`sticky left-0 z-10 ${rowBg} px-3 py-2 font-medium text-gray-900 whitespace-nowrap`}>
                       {p.vendorName}
                     </td>
                     <td className="px-3 py-2 text-gray-700 max-w-[12rem] truncate">
@@ -732,7 +603,7 @@ export function PrepaymentRecon({
             No prepayments set up yet
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            Use the &quot;Add Prepayment&quot; form above to create a new prepayment schedule.
+            Use the &quot;Add Prepayment&quot; form below to create a new prepayment schedule.
             Each prepayment will be automatically amortised across the defined period.
           </p>
           <p className="mt-2 text-xs text-gray-400">
@@ -743,6 +614,193 @@ export function PrepaymentRecon({
           </p>
         </div>
       )}
+
+      {/* Add Prepayment Form */}
+      <div className="rounded-lg border border-gray-200 bg-white">
+        <button
+          onClick={() => setShowForm(!showForm)}
+          className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          <span>Add Prepayment</span>
+          <svg
+            className={`h-5 w-5 transition-transform ${showForm ? "rotate-180" : ""}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {showForm && (
+          <form onSubmit={handleCreate} className="border-t border-gray-200 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Vendor *
+                </label>
+                <input
+                  type="text"
+                  value={vendorName}
+                  onChange={(e) => setVendorName(e.target.value)}
+                  placeholder="e.g. AWS"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Description *
+                </label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="e.g. Annual hosting subscription"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Account *
+                </label>
+                <input
+                  type="text"
+                  value={nominalAccount}
+                  onChange={(e) => setNominalAccount(e.target.value)}
+                  placeholder="e.g. 1700"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Start Date *
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  End Date *
+                </label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Total Amount *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={totalAmount}
+                  onChange={(e) => setTotalAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-right font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500">
+                  Spread Method *
+                </label>
+                <select
+                  value={spreadMethod}
+                  onChange={(e) => setSpreadMethod(e.target.value as SpreadMethod)}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="equal">Equal monthly</option>
+                  <option value="daily_proration">Daily proration</option>
+                  <option value="half_month">Half-month convention</option>
+                </select>
+              </div>
+            </div>
+            {/* Spread method explanation */}
+            <div className="mt-2 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              {spreadMethod === "equal" && "Same amount each month regardless of start/end dates. Last month absorbs any rounding difference."}
+              {spreadMethod === "daily_proration" && "Amount split by actual days in each month. Partial first/last months receive proportionally less."}
+              {spreadMethod === "half_month" && "Partial months receive half a monthly allocation. Full months receive a full allocation."}
+            </div>
+            {/* Preview calculation */}
+            {startDate && endDate && totalAmount && new Date(endDate) > new Date(startDate) && (
+              <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-xs text-gray-700">
+                {(() => {
+                  const months = calcMonths(startDate, endDate);
+                  const amt = parseFloat(totalAmount);
+                  if (spreadMethod === "equal") {
+                    const monthly = amt / months;
+                    return (
+                      <>
+                        <span className="font-medium">{months} months</span>
+                        {" | "}
+                        <span className="font-mono">{formatCurrency(monthly)}/month</span>
+                      </>
+                    );
+                  } else if (spreadMethod === "daily_proration") {
+                    const preview = calcDailyPreview(startDate, endDate, amt, months);
+                    return (
+                      <>
+                        <span className="font-medium">{months} months</span>
+                        {" | "}
+                        <span className="font-mono">
+                          {preview.first !== preview.middle
+                            ? `First: ${formatCurrency(preview.first)}, Mid: ${formatCurrency(preview.middle)}/month`
+                            : `${formatCurrency(preview.middle)}/month`}
+                          {preview.last !== preview.middle && `, Last: ${formatCurrency(preview.last)}`}
+                        </span>
+                      </>
+                    );
+                  } else {
+                    // half_month
+                    const preview = calcHalfMonthPreview(startDate, endDate, amt, months);
+                    return (
+                      <>
+                        <span className="font-medium">{months} months ({preview.effectiveMonths} effective)</span>
+                        {" | "}
+                        <span className="font-mono">
+                          Full: {formatCurrency(preview.full)}/month
+                          {preview.hasPartialFirst && `, First: ${formatCurrency(preview.half)}`}
+                          {preview.hasPartialLast && `, Last: ${formatCurrency(preview.half)}`}
+                        </span>
+                      </>
+                    );
+                  }
+                })()}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? "Creating..." : "Create Prepayment"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
 
       {/* Cancelled prepayments (collapsed) */}
       {initialPrepayments.filter((p) => p.status === "cancelled").length > 0 && (
@@ -852,4 +910,88 @@ function formatDateShort(dateStr: string): string {
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = String(d.getFullYear()).slice(-2);
   return `${day}/${month}/${year}`;
+}
+
+/** Preview for daily proration spread. Returns first, middle, and last month amounts. */
+function calcDailyPreview(
+  startDate: string,
+  endDate: string,
+  totalAmount: number,
+  numberOfMonths: number
+): { first: number; middle: number; last: number } {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  function daysInMonth(year: number, month: number): number {
+    return new Date(year, month, 0).getDate();
+  }
+
+  const monthDays: number[] = [];
+  let curYear = start.getFullYear();
+  let curMonth = start.getMonth() + 1;
+
+  for (let i = 0; i < numberOfMonths; i++) {
+    const totalDays = daysInMonth(curYear, curMonth);
+    let days: number;
+    if (i === 0 && i === numberOfMonths - 1) {
+      days = end.getDate() - start.getDate() + 1;
+    } else if (i === 0) {
+      days = totalDays - start.getDate() + 1;
+    } else if (i === numberOfMonths - 1) {
+      days = end.getDate();
+    } else {
+      days = totalDays;
+    }
+    monthDays.push(Math.max(days, 0));
+    curMonth++;
+    if (curMonth > 12) { curMonth = 1; curYear++; }
+  }
+
+  const totalDays = monthDays.reduce((a, b) => a + b, 0);
+  const first = Math.round((totalAmount * monthDays[0] / totalDays) * 100) / 100;
+  const last = Math.round((totalAmount * monthDays[monthDays.length - 1] / totalDays) * 100) / 100;
+  // Middle: use second month if exists, otherwise first
+  const midIdx = numberOfMonths > 2 ? 1 : 0;
+  const middle = Math.round((totalAmount * monthDays[midIdx] / totalDays) * 100) / 100;
+
+  return { first, middle, last };
+}
+
+/** Preview for half-month convention. */
+function calcHalfMonthPreview(
+  startDate: string,
+  endDate: string,
+  totalAmount: number,
+  numberOfMonths: number
+): { full: number; half: number; effectiveMonths: number; hasPartialFirst: boolean; hasPartialLast: boolean } {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  function daysInMonth(year: number, month: number): number {
+    return new Date(year, month, 0).getDate();
+  }
+
+  const hasPartialFirst = start.getDate() > 1;
+  const lastDayOfEndMonth = daysInMonth(end.getFullYear(), end.getMonth() + 1);
+  const hasPartialLast = numberOfMonths > 1 && end.getDate() < lastDayOfEndMonth;
+
+  let effectiveMonths = 0;
+  for (let i = 0; i < numberOfMonths; i++) {
+    if (i === 0 && hasPartialFirst) {
+      effectiveMonths += 0.5;
+    } else if (i === numberOfMonths - 1 && hasPartialLast) {
+      effectiveMonths += 0.5;
+    } else {
+      effectiveMonths += 1;
+    }
+  }
+
+  const perUnit = totalAmount / effectiveMonths;
+  return {
+    full: Math.round(perUnit * 100) / 100,
+    half: Math.round((perUnit * 0.5) * 100) / 100,
+    effectiveMonths,
+    hasPartialFirst,
+    hasPartialLast,
+  };
 }
