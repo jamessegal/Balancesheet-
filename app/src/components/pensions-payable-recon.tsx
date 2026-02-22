@@ -235,6 +235,10 @@ export function PensionsPayableRecon({
         <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
           Movements this Period
         </h3>
+        <p className="mt-1 text-xs text-gray-400">
+          Debit payments clear the brought-forward balance. Credit accruals
+          should be added to closing to explain the period-end balance.
+        </p>
         {movements.length > 0 ? (
           <div className="mt-2 overflow-hidden rounded-lg border border-gray-200 bg-white">
             <table className="min-w-full divide-y divide-gray-200">
@@ -296,28 +300,37 @@ export function PensionsPayableRecon({
                       </td>
                       <td className="whitespace-nowrap px-4 py-2 text-center text-sm">
                         {isMatched ? (
-                          <span className="inline-flex items-center gap-1 text-xs text-green-600">
-                            Clears BF
+                          <span className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                            Clears brought forward
                           </span>
                         ) : isPayment && bfTotal !== 0 && !bfCleared ? (
                           <button
                             onClick={() => handleClearBF(mov.id)}
                             className={`rounded px-2 py-1 text-xs font-medium ${
                               isAutoSuggested
-                                ? "bg-yellow-200 text-yellow-800 hover:bg-yellow-300"
+                                ? "animate-pulse bg-yellow-200 text-yellow-800 hover:bg-yellow-300"
                                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                             }`}
                           >
-                            {isAutoSuggested ? "Match (exact)" : "Match to BF"}
+                            {isAutoSuggested
+                              ? "Match to BF (exact amount)"
+                              : "Match to BF"}
                           </button>
                         ) : !isMatched && !isPayment ? (
                           <button
                             onClick={() => handleAddFromGL(mov)}
                             disabled={loading}
-                            className="rounded bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                            className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                           >
                             Add to closing
                           </button>
+                        ) : isPayment ? (
+                          <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs text-gray-500">
+                            Payment — no action needed
+                          </span>
                         ) : null}
                       </td>
                     </tr>
@@ -491,14 +504,21 @@ export function PensionsPayableRecon({
 
         {/* Empty state */}
         {initialClosingItems.length === 0 && (
-          <div className="mt-3 rounded-lg border border-dashed border-gray-300 p-4 text-center">
-            <p className="text-sm text-gray-500">
-              No closing items yet. Add items from GL movements above or
-              manually to explain the{" "}
+          <div className="mt-3 rounded-lg border border-dashed border-gray-300 p-4">
+            <p className="text-sm font-medium text-gray-700">
+              No closing items yet
+            </p>
+            <p className="mt-1 text-xs text-gray-500">
+              The closing balance is{" "}
               <span className="font-semibold">
                 {formatCurrency(closingBalance)}
+              </span>
+              . To reconcile, use the{" "}
+              <span className="inline-flex items-center rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                Add to closing
               </span>{" "}
-              balance.
+              buttons on credit movements above, or add items manually using the
+              form.
             </p>
           </div>
         )}
