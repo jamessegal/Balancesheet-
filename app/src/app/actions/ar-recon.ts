@@ -208,6 +208,7 @@ export async function loadARReconData(accountId: string) {
     dueDate: string | null;
     originalAmount: string;
     outstandingAmount: string;
+    currentAmountDue: string | null;
     agingBucket: string;
     daysOverdue: number;
     requiresComment: boolean;
@@ -228,6 +229,7 @@ export async function loadARReconData(accountId: string) {
           dueDate: arInvoiceSnapshots.dueDate,
           originalAmount: arInvoiceSnapshots.originalAmount,
           outstandingAmount: arInvoiceSnapshots.outstandingAmount,
+          currentAmountDue: arInvoiceSnapshots.currentAmountDue,
           agingBucket: arInvoiceSnapshots.agingBucket,
           daysOverdue: arInvoiceSnapshots.daysOverdue,
           requiresComment: arInvoiceSnapshots.requiresComment,
@@ -341,6 +343,7 @@ export async function fetchAgedReceivables(accountId: string) {
       dueDate: string;
       originalAmount: string;
       outstandingAmount: string;
+      currentAmountDue: string;
       agingBucket: AgingBucket;
       daysOverdue: number;
       requiresComment: boolean;
@@ -367,6 +370,7 @@ export async function fetchAgedReceivables(accountId: string) {
         dueDate,
         originalAmount: String(inv.Total),
         outstandingAmount: String(outstandingAtME),
+        currentAmountDue: String(inv.AmountDue),
         agingBucket: bucket,
         daysOverdue,
         requiresComment,

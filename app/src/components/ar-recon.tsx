@@ -39,6 +39,7 @@ interface InvoiceRow {
   dueDate: string | null;
   originalAmount: string;
   outstandingAmount: string;
+  currentAmountDue: string | null;
   agingBucket: string;
   daysOverdue: number;
   requiresComment: boolean;
@@ -46,6 +47,17 @@ interface InvoiceRow {
   riskFlag: string;
   reviewed: boolean;
 }
+
+type SortColumn =
+  | "contactName"
+  | "invoiceNumber"
+  | "invoiceDate"
+  | "dueDate"
+  | "outstandingAmount"
+  | "daysOverdue"
+  | "status"
+  | null;
+type SortDirection = "asc" | "desc";
 
 interface Props {
   accountId: string;
@@ -135,6 +147,8 @@ export function ARRecon({
   const [commentDraft, setCommentDraft] = useState("");
   const [savingComment, setSavingComment] = useState(false);
   const [showCurrentBucket, setShowCurrentBucket] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   const hasData = recon && invoices.length > 0;
   const agedTotal = recon?.agedReportTotal
@@ -166,6 +180,67 @@ export function ARRecon({
     (inv) =>
       inv.agingBucket === "90_plus" && !inv.commentText?.trim()
   ).length;
+
+  // Sort helpers
+  function handleSort(col: SortColumn) {
+    if (sortColumn === col) {
+      if (sortDirection === "asc") {
+        setSortDirection("desc");
+      } else {
+        // Third click resets to default (bucket grouping)
+        setSortColumn(null);
+        setSortDirection("asc");
+      }
+    } else {
+      setSortColumn(col);
+      setSortDirection("asc");
+    }
+  }
+
+  function getPaymentStatus(inv: InvoiceRow): "paid" | "part_paid" | null {
+    if (inv.currentAmountDue == null) return null;
+    const current = parseFloat(inv.currentAmountDue);
+    const atME = parseFloat(inv.outstandingAmount);
+    if (current < 0.005) return "paid";
+    if (current < atME - 0.005) return "part_paid";
+    return null;
+  }
+
+  function sortedInvoices(): InvoiceRow[] {
+    if (!sortColumn) return invoices;
+    const sorted = [...invoices];
+    sorted.sort((a, b) => {
+      let cmp = 0;
+      switch (sortColumn) {
+        case "contactName":
+          cmp = a.contactName.localeCompare(b.contactName);
+          break;
+        case "invoiceNumber":
+          cmp = (a.invoiceNumber || "").localeCompare(b.invoiceNumber || "");
+          break;
+        case "invoiceDate":
+          cmp = (a.invoiceDate || "").localeCompare(b.invoiceDate || "");
+          break;
+        case "dueDate":
+          cmp = (a.dueDate || "").localeCompare(b.dueDate || "");
+          break;
+        case "outstandingAmount":
+          cmp = parseFloat(a.outstandingAmount) - parseFloat(b.outstandingAmount);
+          break;
+        case "daysOverdue":
+          cmp = a.daysOverdue - b.daysOverdue;
+          break;
+        case "status": {
+          const rank = (s: "paid" | "part_paid" | null) =>
+            s === "paid" ? 0 : s === "part_paid" ? 1 : 2;
+          cmp = rank(getPaymentStatus(a)) - rank(getPaymentStatus(b));
+          break;
+        }
+      }
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return sorted;
+  }
 
   // ------------------------------------------------------------------
   // Handlers
@@ -440,6 +515,17 @@ export function ARRecon({
               Invoice Detail
             </h3>
             <div className="flex items-center gap-2">
+              {sortColumn && (
+                <button
+                  onClick={() => {
+                    setSortColumn(null);
+                    setSortDirection("asc");
+                  }}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Reset to bucket view
+                </button>
+              )}
               <label className="flex items-center gap-1.5 text-xs text-gray-500">
                 <input
                   type="checkbox"
@@ -456,27 +542,16 @@ export function ARRecon({
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Customer
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Invoice #
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Inv Date
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Due Date
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Outstanding
-                  </th>
-                  <th className="px-3 py-2 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Days O/D
-                  </th>
+                  <SortHeader col="contactName" label="Customer" align="left" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader col="invoiceNumber" label="Invoice #" align="left" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader col="invoiceDate" label="Inv Date" align="left" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader col="dueDate" label="Due Date" align="left" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader col="outstandingAmount" label="Outstanding" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader col="daysOverdue" label="Days O/D" align="center" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   <th className="px-3 py-2 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
                     Bucket
                   </th>
+                  <SortHeader col="status" label="Status" align="center" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 min-w-[200px]">
                     Comment
                   </th>
@@ -489,201 +564,76 @@ export function ARRecon({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {BUCKET_ORDER.map((bucket) => {
-                  const bucketInvoices = invoices.filter(
-                    (inv) => inv.agingBucket === bucket
-                  );
-                  if (bucketInvoices.length === 0) return null;
-
-                  // Hide current bucket by default
-                  if (bucket === "current" && !showCurrentBucket) {
-                    return (
-                      <tr key={bucket} className="bg-gray-50">
-                        <td
-                          colSpan={10}
-                          className="px-3 py-2 text-center text-xs text-gray-400"
-                        >
-                          {bucketInvoices.length} current invoice
-                          {bucketInvoices.length !== 1 ? "s" : ""} hidden (
-                          {formatAmount(bucketTotals.current.total)}) —{" "}
-                          <button
-                            onClick={() => setShowCurrentBucket(true)}
-                            className="text-blue-600 hover:underline"
-                          >
-                            show
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  }
-
-                  return bucketInvoices.map((inv) => {
-                    const bColors =
-                      BUCKET_COLORS[inv.agingBucket as AgingBucket];
-                    const isHighBalance =
-                      parseFloat(inv.outstandingAmount) > 10000 &&
-                      inv.daysOverdue > 30;
-                    const isEditing = editingComment === inv.id;
-
-                    return (
-                      <tr
+                {sortColumn ? (
+                  // Flat sorted view
+                  sortedInvoices()
+                    .filter(
+                      (inv) =>
+                        showCurrentBucket || inv.agingBucket !== "current"
+                    )
+                    .map((inv) => (
+                      <InvoiceTableRow
                         key={inv.id}
-                        className={`hover:bg-gray-50 ${
-                          inv.reviewed ? "opacity-60" : ""
-                        } ${isHighBalance && !inv.reviewed ? "bg-red-50/30" : ""}`}
-                      >
-                        <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-900">
-                          {inv.contactName}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-700">
-                          {inv.invoiceNumber || "-"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-gray-500">
-                          {inv.invoiceDate
-                            ? formatDateGB(inv.invoiceDate)
-                            : "-"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-gray-500">
-                          {inv.dueDate ? formatDateGB(inv.dueDate) : "-"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-900">
-                          {formatAmount(parseFloat(inv.outstandingAmount))}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-center">
-                          <span
-                            className={
-                              inv.daysOverdue > 90
-                                ? "font-semibold text-red-600"
-                                : inv.daysOverdue > 60
-                                  ? "font-medium text-orange-600"
-                                  : inv.daysOverdue > 30
-                                    ? "text-amber-600"
-                                    : "text-gray-500"
-                            }
-                          >
-                            {inv.daysOverdue > 0 ? inv.daysOverdue : "-"}
-                          </span>
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-center">
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${bColors.badge}`}
-                          >
-                            {
-                              BUCKET_LABELS[
-                                inv.agingBucket as AgingBucket
-                              ]
-                            }
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          {isEditing ? (
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="text"
-                                value={commentDraft}
-                                onChange={(e) =>
-                                  setCommentDraft(e.target.value)
-                                }
-                                placeholder="Enter comment..."
-                                className="w-full min-w-[160px] rounded border border-gray-300 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
-                                autoFocus
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    handleSaveComment(inv.id);
-                                  }
-                                  if (e.key === "Escape") {
-                                    setEditingComment(null);
-                                    setCommentDraft("");
-                                  }
-                                }}
-                                disabled={isComplete}
-                              />
-                              <button
-                                onClick={() => handleSaveComment(inv.id)}
-                                disabled={savingComment || isComplete}
-                                className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                              >
-                                {savingComment ? "..." : "Save"}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setEditingComment(null);
-                                  setCommentDraft("");
-                                }}
-                                className="rounded bg-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-300"
-                              >
-                                X
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                if (isComplete) return;
-                                setEditingComment(inv.id);
-                                setCommentDraft(inv.commentText || "");
-                              }}
-                              className={`w-full text-left text-xs ${
-                                isComplete
-                                  ? "cursor-default"
-                                  : "cursor-pointer hover:text-blue-600"
-                              } ${
-                                inv.commentText
-                                  ? "text-gray-700"
-                                  : inv.requiresComment
-                                    ? "italic text-red-400"
-                                    : "text-gray-300"
-                              }`}
-                              disabled={isComplete}
-                            >
-                              {inv.commentText ||
-                                (inv.requiresComment
-                                  ? "Comment required"
-                                  : inv.agingBucket === "61_90"
-                                    ? "Recommended"
-                                    : "Click to add")}
-                            </button>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-center">
-                          <select
-                            value={inv.riskFlag}
-                            onChange={(e) =>
-                              handleRiskFlagChange(
-                                inv.id,
-                                e.target.value as RiskFlag
-                              )
-                            }
-                            disabled={isComplete}
-                            className={`rounded border border-gray-200 px-1.5 py-0.5 text-xs ${
-                              inv.riskFlag === "high"
-                                ? "bg-red-50 text-red-700"
-                                : inv.riskFlag === "watch"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "text-gray-500"
-                            } ${isComplete ? "cursor-default opacity-60" : ""}`}
-                          >
-                            {RISK_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-center">
-                          <input
-                            type="checkbox"
-                            checked={inv.reviewed}
-                            onChange={() =>
-                              handleToggleReviewed(inv.id, inv.reviewed)
-                            }
-                            disabled={isComplete}
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          />
-                        </td>
-                      </tr>
+                        inv={inv}
+                        paymentStatus={getPaymentStatus(inv)}
+                        isComplete={isComplete}
+                        editingComment={editingComment}
+                        commentDraft={commentDraft}
+                        savingComment={savingComment}
+                        setEditingComment={setEditingComment}
+                        setCommentDraft={setCommentDraft}
+                        onSaveComment={handleSaveComment}
+                        onRiskFlagChange={handleRiskFlagChange}
+                        onToggleReviewed={handleToggleReviewed}
+                      />
+                    ))
+                ) : (
+                  // Bucket-grouped view (default)
+                  BUCKET_ORDER.map((bucket) => {
+                    const bucketInvoices = invoices.filter(
+                      (inv) => inv.agingBucket === bucket
                     );
-                  });
-                })}
+                    if (bucketInvoices.length === 0) return null;
+
+                    if (bucket === "current" && !showCurrentBucket) {
+                      return (
+                        <tr key={bucket} className="bg-gray-50">
+                          <td
+                            colSpan={11}
+                            className="px-3 py-2 text-center text-xs text-gray-400"
+                          >
+                            {bucketInvoices.length} current invoice
+                            {bucketInvoices.length !== 1 ? "s" : ""} hidden (
+                            {formatAmount(bucketTotals.current.total)}) —{" "}
+                            <button
+                              onClick={() => setShowCurrentBucket(true)}
+                              className="text-blue-600 hover:underline"
+                            >
+                              show
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return bucketInvoices.map((inv) => (
+                      <InvoiceTableRow
+                        key={inv.id}
+                        inv={inv}
+                        paymentStatus={getPaymentStatus(inv)}
+                        isComplete={isComplete}
+                        editingComment={editingComment}
+                        commentDraft={commentDraft}
+                        savingComment={savingComment}
+                        setEditingComment={setEditingComment}
+                        setCommentDraft={setCommentDraft}
+                        onSaveComment={handleSaveComment}
+                        onRiskFlagChange={handleRiskFlagChange}
+                        onToggleReviewed={handleToggleReviewed}
+                      />
+                    ));
+                  })
+                )}
               </tbody>
               <tfoot className="bg-gray-50">
                 <tr className="border-t-2 border-gray-300">
@@ -696,7 +646,7 @@ export function ARRecon({
                   <td className="px-3 py-2 text-right text-sm font-mono font-semibold text-gray-900">
                     {formatAmount(agedTotal)}
                   </td>
-                  <td colSpan={5} />
+                  <td colSpan={6} />
                 </tr>
               </tfoot>
             </table>
@@ -820,6 +770,230 @@ export function ARRecon({
         </div>
       )}
     </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Sub-components
+// ------------------------------------------------------------------
+
+function SortHeader({
+  col,
+  label,
+  align,
+  sortColumn,
+  sortDirection,
+  onSort,
+}: {
+  col: SortColumn;
+  label: string;
+  align: "left" | "right" | "center";
+  sortColumn: SortColumn;
+  sortDirection: SortDirection;
+  onSort: (col: SortColumn) => void;
+}) {
+  const isActive = sortColumn === col;
+  const arrow = isActive
+    ? sortDirection === "asc"
+      ? " \u2191"
+      : " \u2193"
+    : "";
+  return (
+    <th
+      className={`px-3 py-2 text-${align} text-xs font-medium uppercase tracking-wider cursor-pointer select-none hover:bg-gray-100 ${
+        isActive ? "text-blue-700" : "text-gray-500"
+      }`}
+      onClick={() => onSort(col)}
+    >
+      {label}
+      <span className="text-gray-400">{arrow || " \u2195"}</span>
+    </th>
+  );
+}
+
+function InvoiceTableRow({
+  inv,
+  paymentStatus,
+  isComplete,
+  editingComment,
+  commentDraft,
+  savingComment,
+  setEditingComment,
+  setCommentDraft,
+  onSaveComment,
+  onRiskFlagChange,
+  onToggleReviewed,
+}: {
+  inv: InvoiceRow;
+  paymentStatus: "paid" | "part_paid" | null;
+  isComplete: boolean;
+  editingComment: string | null;
+  commentDraft: string;
+  savingComment: boolean;
+  setEditingComment: (id: string | null) => void;
+  setCommentDraft: (v: string) => void;
+  onSaveComment: (id: string) => void;
+  onRiskFlagChange: (id: string, flag: RiskFlag) => void;
+  onToggleReviewed: (id: string, current: boolean) => void;
+}) {
+  const bColors = BUCKET_COLORS[inv.agingBucket as AgingBucket];
+  const isHighBalance =
+    parseFloat(inv.outstandingAmount) > 10000 && inv.daysOverdue > 30;
+  const isEditing = editingComment === inv.id;
+
+  return (
+    <tr
+      className={`hover:bg-gray-50 ${
+        inv.reviewed ? "opacity-60" : ""
+      } ${isHighBalance && !inv.reviewed ? "bg-red-50/30" : ""}`}
+    >
+      <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-900">
+        {inv.contactName}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 font-mono text-gray-700">
+        {inv.invoiceNumber || "-"}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-gray-500">
+        {inv.invoiceDate ? formatDateGB(inv.invoiceDate) : "-"}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-gray-500">
+        {inv.dueDate ? formatDateGB(inv.dueDate) : "-"}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-gray-900">
+        {formatAmount(parseFloat(inv.outstandingAmount))}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-center">
+        <span
+          className={
+            inv.daysOverdue > 90
+              ? "font-semibold text-red-600"
+              : inv.daysOverdue > 60
+                ? "font-medium text-orange-600"
+                : inv.daysOverdue > 30
+                  ? "text-amber-600"
+                  : "text-gray-500"
+          }
+        >
+          {inv.daysOverdue > 0 ? inv.daysOverdue : "-"}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-center">
+        <span
+          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${bColors?.badge || ""}`}
+        >
+          {BUCKET_LABELS[inv.agingBucket as AgingBucket] || inv.agingBucket}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-center">
+        {paymentStatus === "paid" ? (
+          <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+            Since paid
+          </span>
+        ) : paymentStatus === "part_paid" ? (
+          <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+            Part paid
+          </span>
+        ) : (
+          <span className="text-xs text-gray-300">-</span>
+        )}
+      </td>
+      <td className="px-3 py-2">
+        {isEditing ? (
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              value={commentDraft}
+              onChange={(e) => setCommentDraft(e.target.value)}
+              placeholder="Enter comment..."
+              className="w-full min-w-[160px] rounded border border-gray-300 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onSaveComment(inv.id);
+                if (e.key === "Escape") {
+                  setEditingComment(null);
+                  setCommentDraft("");
+                }
+              }}
+              disabled={isComplete}
+            />
+            <button
+              onClick={() => onSaveComment(inv.id)}
+              disabled={savingComment || isComplete}
+              className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {savingComment ? "..." : "Save"}
+            </button>
+            <button
+              onClick={() => {
+                setEditingComment(null);
+                setCommentDraft("");
+              }}
+              className="rounded bg-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-300"
+            >
+              X
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => {
+              if (isComplete) return;
+              setEditingComment(inv.id);
+              setCommentDraft(inv.commentText || "");
+            }}
+            className={`w-full text-left text-xs ${
+              isComplete
+                ? "cursor-default"
+                : "cursor-pointer hover:text-blue-600"
+            } ${
+              inv.commentText
+                ? "text-gray-700"
+                : inv.requiresComment
+                  ? "italic text-red-400"
+                  : "text-gray-300"
+            }`}
+            disabled={isComplete}
+          >
+            {inv.commentText ||
+              (inv.requiresComment
+                ? "Comment required"
+                : inv.agingBucket === "61_90"
+                  ? "Recommended"
+                  : "Click to add")}
+          </button>
+        )}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-center">
+        <select
+          value={inv.riskFlag}
+          onChange={(e) =>
+            onRiskFlagChange(inv.id, e.target.value as RiskFlag)
+          }
+          disabled={isComplete}
+          className={`rounded border border-gray-200 px-1.5 py-0.5 text-xs ${
+            inv.riskFlag === "high"
+              ? "bg-red-50 text-red-700"
+              : inv.riskFlag === "watch"
+                ? "bg-amber-50 text-amber-700"
+                : "text-gray-500"
+          } ${isComplete ? "cursor-default opacity-60" : ""}`}
+        >
+          {RISK_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 text-center">
+        <input
+          type="checkbox"
+          checked={inv.reviewed}
+          onChange={() => onToggleReviewed(inv.id, inv.reviewed)}
+          disabled={isComplete}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+      </td>
+    </tr>
   );
 }
 
