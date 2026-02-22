@@ -68,6 +68,57 @@ export default async function PeriodDetailPage({
   const reviewCount = accounts.filter((a) => a.status === "ready_for_review").length;
   const approvedCount = accounts.filter((a) => a.status === "approved").length;
 
+  // Group accounts into balance sheet sections based on Xero account types
+  const BS_SECTIONS: { label: string; types: string[] }[] = [
+    { label: "Fixed Assets", types: ["Fixed Assets", "Non-current Asset", "Non Current Asset"] },
+    { label: "Current Assets", types: ["Current Assets", "Current Asset", "Bank", "Inventory", "Prepayment"] },
+    { label: "Current Liabilities", types: ["Current Liabilities", "Current Liability"] },
+    { label: "Non-current Liabilities", types: ["Non-current Liabilities", "Non Current Liability", "Non-current Liability"] },
+    { label: "Equity", types: ["Equity"] },
+  ];
+
+  function classifyAccount(accountType: string): string {
+    const lower = accountType.toLowerCase();
+    if (lower.includes("fixed") || (lower.includes("non") && lower.includes("asset")))
+      return "Fixed Assets";
+    if (lower.includes("asset") || lower === "bank" || lower === "inventory" || lower === "prepayment")
+      return "Current Assets";
+    if (lower.includes("non") && lower.includes("liabilit"))
+      return "Non-current Liabilities";
+    if (lower.includes("liabilit"))
+      return "Current Liabilities";
+    if (lower.includes("equity") || lower.includes("retained") || lower.includes("capital"))
+      return "Equity";
+    return "Other";
+  }
+
+  const sections = BS_SECTIONS.map((sec) => {
+    const sectionAccounts = accounts.filter(
+      (a) => classifyAccount(a.accountType) === sec.label
+    );
+    const total = sectionAccounts.reduce((s, a) => s + parseFloat(a.balance), 0);
+    const priorTotal = sectionAccounts.reduce(
+      (s, a) => s + (a.priorBalance ? parseFloat(a.priorBalance) : 0),
+      0
+    );
+    return { ...sec, accounts: sectionAccounts, total, priorTotal };
+  });
+
+  // Accounts that don't fit any section
+  const classified = new Set(sections.flatMap((s) => s.accounts.map((a) => a.id)));
+  const otherAccounts = accounts.filter((a) => !classified.has(a.id));
+
+  // Balance sheet totals
+  const totalFixedAssets = sections[0].total;
+  const totalCurrentAssets = sections[1].total;
+  const totalAssets = totalFixedAssets + totalCurrentAssets;
+  const totalCurrentLiabilities = sections[2].total;
+  const totalNonCurrentLiabilities = sections[3].total;
+  const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
+  const netAssets = totalAssets - totalLiabilities;
+  const totalEquity = sections[4].total;
+  const balances = Math.abs(netAssets - totalEquity) < 0.01;
+
   return (
     <div>
       {/* Breadcrumbs */}
@@ -113,7 +164,7 @@ export default async function PeriodDetailPage({
         </div>
       )}
 
-      {/* Account list */}
+      {/* Balance Sheet */}
       {accounts.length === 0 ? (
         <div className="mt-8 rounded-lg border border-dashed border-gray-300 p-12 text-center">
           <p className="text-sm text-gray-500">
@@ -121,114 +172,107 @@ export default async function PeriodDetailPage({
           </p>
         </div>
       ) : (
-        <div className="mt-6 overflow-hidden rounded-lg border border-gray-200 bg-white">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Code
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Account
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Type
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Balance
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Prior Balance
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Movement
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {accounts.map((account) => {
-                const balance = parseFloat(account.balance);
-                const prior = account.priorBalance
-                  ? parseFloat(account.priorBalance)
-                  : null;
-                const movement = prior !== null ? balance - prior : null;
-                const badge =
-                  STATUS_BADGES[account.status] || STATUS_BADGES.draft;
-
-                return (
-                  <tr key={account.id} className="hover:bg-gray-50">
-                    <td className="whitespace-nowrap px-6 py-4 text-sm font-mono text-gray-500">
-                      {account.accountCode || "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
-                      <Link
-                        href={`/clients/${clientId}/periods/${periodId}/accounts/${account.id}`}
-                        className="text-blue-600 hover:text-blue-800"
-                      >
-                        {account.accountName}
-                      </Link>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                      {account.accountType}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-mono text-gray-900">
-                      {formatCurrency(balance)}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-mono text-gray-500">
-                      {prior !== null ? formatCurrency(prior) : "-"}
-                    </td>
-                    <td
-                      className={`whitespace-nowrap px-6 py-4 text-right text-sm font-mono ${
-                        movement !== null && movement !== 0
-                          ? movement > 0
-                            ? "text-green-600"
-                            : "text-red-600"
-                          : "text-gray-400"
-                      }`}
-                    >
-                      {movement !== null ? formatCurrency(movement) : "-"}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${badge.className}`}
-                      >
-                        {badge.label}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            {/* Totals row */}
-            <tfoot className="bg-gray-50">
-              <tr>
-                <td className="px-6 py-3 text-sm font-medium text-gray-900" colSpan={3}>
-                  Total ({totalAccounts} accounts)
-                </td>
-                <td className="px-6 py-3 text-right text-sm font-mono font-medium text-gray-900">
-                  {formatCurrency(
-                    accounts.reduce((sum, a) => sum + parseFloat(a.balance), 0)
-                  )}
-                </td>
-                <td className="px-6 py-3 text-right text-sm font-mono text-gray-500">
-                  {accounts.some((a) => a.priorBalance !== null)
-                    ? formatCurrency(
-                        accounts.reduce(
-                          (sum, a) =>
-                            sum + (a.priorBalance ? parseFloat(a.priorBalance) : 0),
-                          0
-                        )
-                      )
-                    : "-"}
-                </td>
-                <td className="px-6 py-3" />
-                <td className="px-6 py-3" />
-              </tr>
-            </tfoot>
-          </table>
+        <div className="mt-6 space-y-1">
+          <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr className="border-b border-gray-200">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Account
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Balance
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Prior
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Movement
+                  </th>
+                  <th className="w-32 px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sections.map((section) => {
+                  if (section.accounts.length === 0) return null;
+                  return (
+                    <BSSection
+                      key={section.label}
+                      label={section.label}
+                      accounts={section.accounts}
+                      total={section.total}
+                      priorTotal={section.priorTotal}
+                      clientId={clientId}
+                      periodId={periodId}
+                    />
+                  );
+                })}
+                {otherAccounts.length > 0 && (
+                  <BSSection
+                    label="Other"
+                    accounts={otherAccounts}
+                    total={otherAccounts.reduce((s, a) => s + parseFloat(a.balance), 0)}
+                    priorTotal={otherAccounts.reduce(
+                      (s, a) => s + (a.priorBalance ? parseFloat(a.priorBalance) : 0),
+                      0
+                    )}
+                    clientId={clientId}
+                    periodId={periodId}
+                  />
+                )}
+              </tbody>
+              {/* Balance sheet summary */}
+              <tfoot>
+                <tr className="border-t-2 border-gray-400 bg-gray-50">
+                  <td className="px-6 py-2 text-sm font-semibold text-gray-900">
+                    Total Assets
+                  </td>
+                  <td className="px-6 py-2 text-right text-sm font-mono font-semibold text-gray-900">
+                    {formatCurrency(totalAssets)}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+                <tr className="bg-gray-50">
+                  <td className="px-6 py-2 text-sm font-semibold text-gray-900">
+                    Total Liabilities
+                  </td>
+                  <td className="px-6 py-2 text-right text-sm font-mono font-semibold text-gray-900">
+                    {formatCurrency(totalLiabilities)}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+                <tr className="border-t-2 border-gray-400 bg-gray-100">
+                  <td className="px-6 py-3 text-sm font-bold text-gray-900">
+                    Net Assets
+                  </td>
+                  <td className="px-6 py-3 text-right text-sm font-mono font-bold text-gray-900">
+                    {formatCurrency(netAssets)}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+                <tr className="bg-gray-100">
+                  <td className="px-6 py-3 text-sm font-bold text-gray-900">
+                    Total Equity
+                  </td>
+                  <td className="px-6 py-3 text-right text-sm font-mono font-bold text-gray-900">
+                    {formatCurrency(totalEquity)}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+                <tr className={`border-t-2 ${balances ? "border-green-400 bg-green-50" : "border-red-400 bg-red-50"}`}>
+                  <td className={`px-6 py-3 text-sm font-bold ${balances ? "text-green-800" : "text-red-800"}`}>
+                    {balances ? "Balance sheet balances" : "Balance sheet does NOT balance"}
+                  </td>
+                  <td className={`px-6 py-3 text-right text-sm font-mono font-bold ${balances ? "text-green-800" : "text-red-800"}`}>
+                    {balances ? formatCurrency(0) : formatCurrency(netAssets - totalEquity)}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -256,6 +300,108 @@ function SummaryCard({
       <p className="text-sm font-medium text-gray-600">{label}</p>
       <p className="mt-1 text-2xl font-semibold">{count}</p>
     </div>
+  );
+}
+
+const STATUS_BADGES_ROW: Record<string, { label: string; className: string }> = STATUS_BADGES;
+
+function BSSection({
+  label,
+  accounts,
+  total,
+  priorTotal,
+  clientId,
+  periodId,
+}: {
+  label: string;
+  accounts: { id: string; accountCode: string | null; accountName: string; balance: string; priorBalance: string | null; status: string }[];
+  total: number;
+  priorTotal: number;
+  clientId: string;
+  periodId: string;
+}) {
+  const movement = total - priorTotal;
+
+  return (
+    <>
+      {/* Section header */}
+      <tr className="bg-gray-100 border-t border-gray-300">
+        <td colSpan={5} className="px-6 py-2 text-xs font-bold uppercase tracking-wider text-gray-700">
+          {label}
+        </td>
+      </tr>
+      {/* Account rows */}
+      {accounts.map((account) => {
+        const balance = parseFloat(account.balance);
+        const prior = account.priorBalance ? parseFloat(account.priorBalance) : null;
+        const mov = prior !== null ? balance - prior : null;
+        const badge = STATUS_BADGES_ROW[account.status] || STATUS_BADGES_ROW.draft;
+
+        return (
+          <tr key={account.id} className="border-t border-gray-100 hover:bg-gray-50">
+            <td className="whitespace-nowrap px-6 py-2.5 text-sm text-gray-900">
+              {account.accountCode && (
+                <span className="mr-2 font-mono text-xs text-gray-400">{account.accountCode}</span>
+              )}
+              <Link
+                href={`/clients/${clientId}/periods/${periodId}/accounts/${account.id}`}
+                className="text-blue-600 hover:text-blue-800"
+              >
+                {account.accountName}
+              </Link>
+            </td>
+            <td className="whitespace-nowrap px-6 py-2.5 text-right text-sm font-mono text-gray-900">
+              {formatCurrency(balance)}
+            </td>
+            <td className="whitespace-nowrap px-6 py-2.5 text-right text-sm font-mono text-gray-400">
+              {prior !== null ? formatCurrency(prior) : "-"}
+            </td>
+            <td
+              className={`whitespace-nowrap px-6 py-2.5 text-right text-sm font-mono ${
+                mov !== null && mov !== 0
+                  ? mov > 0
+                    ? "text-green-600"
+                    : "text-red-600"
+                  : "text-gray-300"
+              }`}
+            >
+              {mov !== null ? formatCurrency(mov) : "-"}
+            </td>
+            <td className="whitespace-nowrap px-6 py-2.5 text-sm">
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}
+              >
+                {badge.label}
+              </span>
+            </td>
+          </tr>
+        );
+      })}
+      {/* Section subtotal */}
+      <tr className="border-t border-gray-300 bg-gray-50">
+        <td className="px-6 py-2 text-sm font-semibold text-gray-700">
+          Total {label}
+        </td>
+        <td className="px-6 py-2 text-right text-sm font-mono font-semibold text-gray-900">
+          {formatCurrency(total)}
+        </td>
+        <td className="px-6 py-2 text-right text-sm font-mono text-gray-400">
+          {formatCurrency(priorTotal)}
+        </td>
+        <td
+          className={`px-6 py-2 text-right text-sm font-mono font-medium ${
+            movement !== 0
+              ? movement > 0
+                ? "text-green-600"
+                : "text-red-600"
+              : "text-gray-300"
+          }`}
+        >
+          {formatCurrency(movement)}
+        </td>
+        <td />
+      </tr>
+    </>
   );
 }
 

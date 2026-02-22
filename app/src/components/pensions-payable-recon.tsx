@@ -224,8 +224,31 @@ export function PensionsPayableRecon({
     setDeletingId(null);
   }
 
+  const isReconciled = Math.abs(variance) < 0.01;
+
   return (
     <div className="space-y-6">
+      {/* Reconciliation status */}
+      {isReconciled ? (
+        <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+          <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-sm font-medium text-green-800">
+            Reconciled — closing total matches balance per BS
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+          <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-sm font-medium text-red-800">
+            Not reconciled — variance of {formatCurrency(Math.abs(variance))}
+          </p>
+        </div>
+      )}
+
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3">
           <p className="text-sm text-red-700">{error}</p>
