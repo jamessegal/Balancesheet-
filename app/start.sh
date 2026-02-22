@@ -11,7 +11,7 @@ sql\`DROP TABLE IF EXISTS __drizzle_migrations\`.then(() => {
   sql.end();
 });
 " 2>&1 || true
-echo "=== Running database migrations ==="
-pnpm db:migrate 2>&1 || echo "Warning: db:migrate failed, continuing..."
+echo "=== Pushing database schema ==="
+npx drizzle-kit push --force 2>&1 || echo "Warning: db:push failed, continuing..."
 echo "=== Starting server ==="
 exec pnpm start
