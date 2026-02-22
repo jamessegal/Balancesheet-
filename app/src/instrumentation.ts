@@ -33,7 +33,24 @@ async function seedTestDataIfNeeded() {
       .limit(1);
 
     if (existing.length > 0) {
-      console.log("[seed] Test clients already exist, skipping.");
+      console.log("[seed] Test clients already exist, applying data patches...");
+
+      // Patch: fix Bravo Feb balance (10800 → 10799.50)
+      await client`
+        UPDATE reconciliation_accounts SET balance = '10799.50'
+        WHERE account_name = 'PAYE Payable' AND balance = '10800.00'
+          AND period_id IN (
+            SELECT rp.id FROM reconciliation_periods rp
+            JOIN clients c ON rp.client_id = c.id
+            WHERE c.code = 'BRAVO' AND rp.period_month = 2 AND rp.period_year = 2026
+          )`;
+
+      // Patch: fix closing item description
+      await client`
+        UPDATE reconciliation_items SET description = 'Unpaid BF residual'
+        WHERE description = 'Unpaid BF residual (Nov PAYE)'`;
+
+      console.log("[seed] Patches applied.");
       await client.end();
       return;
     }
@@ -250,7 +267,7 @@ async function seedTestDataIfNeeded() {
           closingItems: [{ description: "January PAYE accrual", amount: "10500.00" }],
         },
         {
-          year: 2026, month: 2, balance: "10800.00", priorBalance: "10500.00",
+          year: 2026, month: 2, balance: "10799.50", priorBalance: "10500.00",
           glMovements: [
             { date: "2026-02-10", description: "PAYE payment (main)", source: "BANKSPEND", debit: "7000.00", credit: "0", contact: "HMRC", reference: "BACS-0210" },
             { date: "2026-02-20", description: "PAYE payment (balance)", source: "BANKSPEND", debit: "3500.50", credit: "0", contact: "HMRC", reference: "BACS-0220" },
@@ -282,7 +299,7 @@ async function seedTestDataIfNeeded() {
           ],
           closingItems: [
             { description: "December PAYE accrual", amount: "8500.00" },
-            { description: "Unpaid BF residual (Nov PAYE)", amount: "2000.00" },
+            { description: "Unpaid BF residual", amount: "2000.00" },
           ],
         },
         {
