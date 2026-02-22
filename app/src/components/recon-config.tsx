@@ -6,8 +6,8 @@ import {
   getReconConfigs,
   getUnmappedAccounts,
   bulkSetReconModules,
-  RECON_MODULES,
 } from "@/app/actions/recon-config";
+import { RECON_MODULES } from "@/lib/recon-modules";
 
 interface ReconConfig {
   id: string;
