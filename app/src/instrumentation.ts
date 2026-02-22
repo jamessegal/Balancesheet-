@@ -94,8 +94,22 @@ async function seedTestDataIfNeeded() {
         WHERE description = 'Unpaid BF residual (Nov PAYE)'`;
 
       console.log("[seed] Patches applied.");
-      await client.end();
-      return;
+
+      // Check if bank recon test clients need to be created
+      const deltaExists = await db
+        .select({ id: schema.clients.id })
+        .from(schema.clients)
+        .where(eq(schema.clients.code, "DELTA"))
+        .limit(1);
+
+      if (deltaExists.length === 0) {
+        console.log("[seed] Creating bank recon test clients...");
+        // Fall through to create Delta/Echo below
+      } else {
+        console.log("[seed] Bank recon test clients already exist.");
+        await client.end();
+        return;
+      }
     }
 
     // Get admin user
