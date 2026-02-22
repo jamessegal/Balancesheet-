@@ -519,7 +519,7 @@ async function seedTestData() {
         ],
         closingItems: [
           { description: "December PAYE accrual", amount: "8500.00" },
-          { description: "Unpaid BF residual (Nov PAYE)", amount: "2000.00" },
+          { description: "Unpaid BF residual", amount: "2000.00" },
         ],
       },
       // ── January: BF 10500 (8500 + 2000), payments 8500 + 2000, new accrual 8500 ──
