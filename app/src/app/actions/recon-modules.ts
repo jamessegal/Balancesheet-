@@ -175,6 +175,76 @@ export async function loadPensionsPayableData(accountId: string) {
     }
   }
 
+  // If BF doesn't already contain a rounding item, walk back through earlier
+  // periods to find one. Rounding items persist until cleared by a journal
+  // (which appears as a GL movement), so they must carry forward even if the
+  // intermediate period didn't explicitly save them as closing items.
+  const bfHasRounding = bfItems.some((item) =>
+    item.description.toLowerCase().includes("rounding")
+  );
+  if (!bfHasRounding) {
+    let walkMonth = priorMonth;
+    let walkYear = priorYear;
+    for (let i = 0; i < 24; i++) {
+      const prevMonth = walkMonth === 1 ? 12 : walkMonth - 1;
+      const prevYear = walkMonth === 1 ? walkYear - 1 : walkYear;
+
+      const [prevPeriod] = await db
+        .select()
+        .from(reconciliationPeriods)
+        .where(
+          and(
+            eq(reconciliationPeriods.clientId, period.clientId),
+            eq(reconciliationPeriods.periodYear, prevYear),
+            eq(reconciliationPeriods.periodMonth, prevMonth)
+          )
+        )
+        .limit(1);
+
+      if (!prevPeriod) break;
+
+      const [prevAccount] = await db
+        .select()
+        .from(reconciliationAccounts)
+        .where(
+          and(
+            eq(reconciliationAccounts.periodId, prevPeriod.id),
+            eq(reconciliationAccounts.xeroAccountId, account.xeroAccountId)
+          )
+        )
+        .limit(1);
+
+      if (!prevAccount) break;
+
+      const prevItems = await db
+        .select({
+          id: reconciliationItems.id,
+          description: reconciliationItems.description,
+          amount: reconciliationItems.amount,
+        })
+        .from(reconciliationItems)
+        .where(eq(reconciliationItems.reconAccountId, prevAccount.id));
+
+      const roundingItems = prevItems.filter((item) =>
+        item.description.toLowerCase().includes("rounding")
+      );
+
+      if (roundingItems.length > 0) {
+        for (const ri of roundingItems) {
+          bfItems.push({
+            id: ri.id,
+            description: ri.description,
+            amount: ri.amount,
+          });
+        }
+        break;
+      }
+
+      walkMonth = prevMonth;
+      walkYear = prevYear;
+    }
+  }
+
   // 2. Load GL movements for this period
   const periodStart = `${period.periodYear}-${String(period.periodMonth).padStart(2, "0")}-01`;
   const lastDay = new Date(period.periodYear, period.periodMonth, 0).getDate();
