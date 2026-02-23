@@ -317,6 +317,7 @@ export function PrepaymentRecon({
                   <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Contact</th>
                   <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Debit</th>
                   <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Credit</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium uppercase tracking-wider text-gray-500 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -354,6 +355,34 @@ export function PrepaymentRecon({
                           <span className="text-gray-300">-</span>
                         )}
                       </td>
+                      <td className="px-2 py-2 text-center whitespace-nowrap">
+                        {debit > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setVendorName(m.contact || "");
+                              setDescription(m.description || "");
+                              setTotalAmount(String(debit));
+                              setNominalAccount("");
+                              setStartDate("");
+                              setEndDate("");
+                              setSpreadMethod("equal");
+                              setShowForm(true);
+                              // Scroll to the form after a tick so the DOM has expanded
+                              setTimeout(() => {
+                                document.getElementById("prepayment-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                              }, 100);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+                            title="Create a prepayment from this GL entry"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Prepayment
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -371,6 +400,7 @@ export function PrepaymentRecon({
                       <span className="text-red-600">({formatCurrencyShort(glTotalCredit)})</span>
                     ) : "-"}
                   </td>
+                  <td />
                 </tr>
                 <tr className="border-t border-gray-200">
                   <td colSpan={5} className="px-3 py-2 text-sm font-medium text-gray-700">
@@ -379,6 +409,7 @@ export function PrepaymentRecon({
                   <td colSpan={2} className="px-3 py-2 text-right font-mono font-semibold text-gray-900 whitespace-nowrap">
                     {formatCurrencyShort(glNetMovement)}
                   </td>
+                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -725,7 +756,7 @@ export function PrepaymentRecon({
       )}
 
       {/* Add Prepayment Form */}
-      <div className="rounded-lg border border-gray-200 bg-white">
+      <div id="prepayment-form" className="rounded-lg border border-gray-200 bg-white">
         <button
           onClick={() => setShowForm(!showForm)}
           className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
