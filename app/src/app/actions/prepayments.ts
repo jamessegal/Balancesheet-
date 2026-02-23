@@ -387,25 +387,45 @@ export async function createPrepayment(formData: FormData) {
   const monthlyAmount =
     Math.round((totalAmount / numberOfMonths) * 100) / 100;
 
-  // Insert prepayment
-  const [prepayment] = await db
-    .insert(prepayments)
-    .values({
-      clientId,
-      vendorName,
-      description,
-      nominalAccount,
-      startDate,
-      endDate,
-      totalAmount: totalAmount.toFixed(2),
-      numberOfMonths,
-      monthlyAmount: monthlyAmount.toFixed(2),
-      spreadMethod,
-      xeroInvoiceId,
-      xeroInvoiceUrl,
-      createdBy: session.user.id,
-    })
-    .returning();
+  // Insert prepayment (fall back without xero columns if migration 0010 not yet applied)
+  let prepayment;
+  try {
+    [prepayment] = await db
+      .insert(prepayments)
+      .values({
+        clientId,
+        vendorName,
+        description,
+        nominalAccount,
+        startDate,
+        endDate,
+        totalAmount: totalAmount.toFixed(2),
+        numberOfMonths,
+        monthlyAmount: monthlyAmount.toFixed(2),
+        spreadMethod,
+        xeroInvoiceId,
+        xeroInvoiceUrl,
+        createdBy: session.user.id,
+      })
+      .returning();
+  } catch {
+    [prepayment] = await db
+      .insert(prepayments)
+      .values({
+        clientId,
+        vendorName,
+        description,
+        nominalAccount,
+        startDate,
+        endDate,
+        totalAmount: totalAmount.toFixed(2),
+        numberOfMonths,
+        monthlyAmount: monthlyAmount.toFixed(2),
+        spreadMethod,
+        createdBy: session.user.id,
+      } as typeof prepayments.$inferInsert)
+      .returning();
+  }
 
   // Generate and insert schedule lines
   const lines = generateScheduleLines(
@@ -449,11 +469,38 @@ export async function loadPrepaymentsData(
   await requireRole("junior");
 
   // Load all active/fully_amortised prepayments for this client
-  const allPrepayments = await db
-    .select()
-    .from(prepayments)
-    .where(eq(prepayments.clientId, clientId))
-    .orderBy(asc(prepayments.startDate));
+  // Try full select first; fall back if migration 0010 (xero_invoice columns) not yet applied
+  let allPrepayments;
+  try {
+    allPrepayments = await db
+      .select()
+      .from(prepayments)
+      .where(eq(prepayments.clientId, clientId))
+      .orderBy(asc(prepayments.startDate));
+  } catch {
+    allPrepayments = await db
+      .select({
+        id: prepayments.id,
+        clientId: prepayments.clientId,
+        vendorName: prepayments.vendorName,
+        description: prepayments.description,
+        nominalAccount: prepayments.nominalAccount,
+        startDate: prepayments.startDate,
+        endDate: prepayments.endDate,
+        totalAmount: prepayments.totalAmount,
+        currency: prepayments.currency,
+        numberOfMonths: prepayments.numberOfMonths,
+        monthlyAmount: prepayments.monthlyAmount,
+        spreadMethod: prepayments.spreadMethod,
+        status: prepayments.status,
+        createdBy: prepayments.createdBy,
+        createdAt: prepayments.createdAt,
+        updatedAt: prepayments.updatedAt,
+      })
+      .from(prepayments)
+      .where(eq(prepayments.clientId, clientId))
+      .orderBy(asc(prepayments.startDate));
+  }
 
   if (allPrepayments.length === 0) {
     return { prepayments: [], scheduleLines: [], monthColumns: [], ledgerBalances: {} };
