@@ -727,6 +727,7 @@ export default async function AccountDetailPage({
               monthColumns={prepaymentsData.monthColumns}
               ledgerBalances={prepaymentsData.ledgerBalances}
               closingBalance={balance}
+              glMovements={glTxns}
             />
           ) : reconModule === "prepayments" && prepaymentsError ? (
             <div className="rounded-lg border border-red-200 bg-red-50 p-4">

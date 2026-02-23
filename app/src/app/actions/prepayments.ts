@@ -6,12 +6,10 @@ import {
   prepaymentScheduleLines,
   reconciliationAccounts,
   reconciliationPeriods,
-  xeroConnections,
 } from "@/lib/db/schema";
 import { requireRole } from "@/lib/authorization";
 import { eq, and, asc, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { xeroGet } from "@/lib/xero/client";
 
 // ------------------------------------------------------------------
 // Helpers
@@ -268,91 +266,6 @@ function generateHalfMonth(
 }
 
 // ------------------------------------------------------------------
-// Search Xero for ACCPAY (bill) invoices to link to a prepayment
-// ------------------------------------------------------------------
-
-interface XeroBillResult {
-  invoiceId: string;
-  invoiceNumber: string;
-  contactName: string;
-  date: string;
-  total: number;
-  reference: string | null;
-  url: string;
-}
-
-interface XeroBill {
-  InvoiceID: string;
-  InvoiceNumber: string;
-  Contact: { Name: string };
-  Date: string;
-  Total: number;
-  Reference?: string;
-  Status: string;
-}
-
-/** Parse Xero's /Date(...)/ format or ISO date string to YYYY-MM-DD */
-function parseXeroDate(dateStr: string): string {
-  const msMatch = dateStr.match(/\/Date\((\d+)([+-]\d{4})?\)\//);
-  if (msMatch) {
-    return new Date(Number(msMatch[1])).toISOString().split("T")[0];
-  }
-  return dateStr.split("T")[0];
-}
-
-export async function searchXeroInvoices(
-  clientId: string,
-  searchTerm: string
-): Promise<{ invoices: XeroBillResult[] } | { error: string }> {
-  await requireRole("junior");
-
-  if (!searchTerm || searchTerm.trim().length < 2) {
-    return { error: "Search term must be at least 2 characters" };
-  }
-
-  // Find the Xero connection for this client
-  const [connection] = await db
-    .select()
-    .from(xeroConnections)
-    .where(eq(xeroConnections.clientId, clientId))
-    .limit(1);
-
-  if (!connection || connection.status !== "active") {
-    return { error: "No active Xero connection for this client" };
-  }
-
-  try {
-    // Search ACCPAY invoices (bills) by contact name or invoice number
-    const term = searchTerm.trim().replace(/"/g, "");
-    const whereFilter = `Type=="ACCPAY" AND (Contact.Name.Contains("${term}") || InvoiceNumber.Contains("${term}"))`;
-    const encoded = encodeURIComponent(whereFilter);
-
-    const resp = await xeroGet<{ Invoices: XeroBill[] }>(
-      connection.id,
-      connection.xeroTenantId,
-      `/Invoices?where=${encoded}&order=Date%20DESC&page=1`
-    );
-
-    const invoices: XeroBillResult[] = (resp.Invoices || [])
-      .filter((inv) => inv.Status !== "VOIDED" && inv.Status !== "DELETED")
-      .slice(0, 20)
-      .map((inv) => ({
-        invoiceId: inv.InvoiceID,
-        invoiceNumber: inv.InvoiceNumber,
-        contactName: inv.Contact.Name,
-        date: parseXeroDate(inv.Date),
-        total: inv.Total,
-        reference: inv.Reference || null,
-        url: `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${inv.InvoiceID}`,
-      }));
-
-    return { invoices };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : "Failed to search Xero invoices" };
-  }
-}
-
-// ------------------------------------------------------------------
 // Create a prepayment and generate its schedule
 // ------------------------------------------------------------------
 export async function createPrepayment(formData: FormData) {
@@ -367,8 +280,6 @@ export async function createPrepayment(formData: FormData) {
   const totalAmountStr = formData.get("totalAmount") as string;
   const periodId = formData.get("periodId") as string;
   const spreadMethod = (formData.get("spreadMethod") as SpreadMethod) || "equal";
-  const xeroInvoiceId = (formData.get("xeroInvoiceId") as string) || null;
-  const xeroInvoiceUrl = (formData.get("xeroInvoiceUrl") as string) || null;
 
   if (!clientId || !vendorName || !description || !nominalAccount || !startDate || !endDate || !totalAmountStr) {
     return { error: "Missing required fields" };
@@ -387,45 +298,23 @@ export async function createPrepayment(formData: FormData) {
   const monthlyAmount =
     Math.round((totalAmount / numberOfMonths) * 100) / 100;
 
-  // Insert prepayment (fall back without xero columns if migration 0010 not yet applied)
-  let prepayment;
-  try {
-    [prepayment] = await db
-      .insert(prepayments)
-      .values({
-        clientId,
-        vendorName,
-        description,
-        nominalAccount,
-        startDate,
-        endDate,
-        totalAmount: totalAmount.toFixed(2),
-        numberOfMonths,
-        monthlyAmount: monthlyAmount.toFixed(2),
-        spreadMethod,
-        xeroInvoiceId,
-        xeroInvoiceUrl,
-        createdBy: session.user.id,
-      })
-      .returning();
-  } catch {
-    [prepayment] = await db
-      .insert(prepayments)
-      .values({
-        clientId,
-        vendorName,
-        description,
-        nominalAccount,
-        startDate,
-        endDate,
-        totalAmount: totalAmount.toFixed(2),
-        numberOfMonths,
-        monthlyAmount: monthlyAmount.toFixed(2),
-        spreadMethod,
-        createdBy: session.user.id,
-      } as typeof prepayments.$inferInsert)
-      .returning();
-  }
+  // Insert prepayment
+  const [prepayment] = await db
+    .insert(prepayments)
+    .values({
+      clientId,
+      vendorName,
+      description,
+      nominalAccount,
+      startDate,
+      endDate,
+      totalAmount: totalAmount.toFixed(2),
+      numberOfMonths,
+      monthlyAmount: monthlyAmount.toFixed(2),
+      spreadMethod,
+      createdBy: session.user.id,
+    })
+    .returning();
 
   // Generate and insert schedule lines
   const lines = generateScheduleLines(
@@ -469,38 +358,11 @@ export async function loadPrepaymentsData(
   await requireRole("junior");
 
   // Load all active/fully_amortised prepayments for this client
-  // Try full select first; fall back if migration 0010 (xero_invoice columns) not yet applied
-  let allPrepayments;
-  try {
-    allPrepayments = await db
-      .select()
-      .from(prepayments)
-      .where(eq(prepayments.clientId, clientId))
-      .orderBy(asc(prepayments.startDate));
-  } catch {
-    allPrepayments = await db
-      .select({
-        id: prepayments.id,
-        clientId: prepayments.clientId,
-        vendorName: prepayments.vendorName,
-        description: prepayments.description,
-        nominalAccount: prepayments.nominalAccount,
-        startDate: prepayments.startDate,
-        endDate: prepayments.endDate,
-        totalAmount: prepayments.totalAmount,
-        currency: prepayments.currency,
-        numberOfMonths: prepayments.numberOfMonths,
-        monthlyAmount: prepayments.monthlyAmount,
-        spreadMethod: prepayments.spreadMethod,
-        status: prepayments.status,
-        createdBy: prepayments.createdBy,
-        createdAt: prepayments.createdAt,
-        updatedAt: prepayments.updatedAt,
-      })
-      .from(prepayments)
-      .where(eq(prepayments.clientId, clientId))
-      .orderBy(asc(prepayments.startDate));
-  }
+  const allPrepayments = await db
+    .select()
+    .from(prepayments)
+    .where(eq(prepayments.clientId, clientId))
+    .orderBy(asc(prepayments.startDate));
 
   if (allPrepayments.length === 0) {
     return { prepayments: [], scheduleLines: [], monthColumns: [], ledgerBalances: {} };

@@ -406,8 +406,6 @@ export const prepayments = pgTable(
     numberOfMonths: integer("number_of_months").notNull(),
     monthlyAmount: numeric("monthly_amount", { precision: 18, scale: 2 }).notNull(),
     spreadMethod: prepaymentSpreadMethodEnum("spread_method").notNull().default("equal"),
-    xeroInvoiceId: text("xero_invoice_id"),
-    xeroInvoiceUrl: text("xero_invoice_url"),
     status: prepaymentStatusEnum("status").notNull().default("active"),
     createdBy: uuid("created_by")
       .notNull()
