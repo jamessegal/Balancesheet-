@@ -722,6 +722,7 @@ export default async function AccountDetailPage({
               periodId={periodId}
               periodYear={period.periodYear}
               periodMonth={period.periodMonth}
+              accountCode={account.accountCode || ""}
               prepayments={prepaymentsData.prepayments}
               scheduleLines={prepaymentsData.scheduleLines}
               monthColumns={prepaymentsData.monthColumns}
