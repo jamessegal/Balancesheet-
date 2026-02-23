@@ -7,7 +7,6 @@ import {
   overridePrepaymentLine,
   cancelPrepayment,
   deletePrepayment,
-  searchXeroInvoices,
 } from "@/app/actions/prepayments";
 
 // ------------------------------------------------------------------
@@ -27,19 +26,7 @@ interface PrepaymentRow {
   numberOfMonths: number;
   monthlyAmount: string;
   spreadMethod?: SpreadMethod;
-  xeroInvoiceId?: string | null;
-  xeroInvoiceUrl?: string | null;
   status: "active" | "fully_amortised" | "cancelled";
-}
-
-interface InvoiceResult {
-  invoiceId: string;
-  invoiceNumber: string;
-  contactName: string;
-  date: string;
-  total: number;
-  reference: string | null;
-  url: string;
 }
 
 interface ScheduleLine {
@@ -54,6 +41,17 @@ interface ScheduleLine {
   isOverridden: boolean;
 }
 
+interface GLMovement {
+  id: string;
+  transactionDate: string;
+  source: string | null;
+  description: string | null;
+  reference: string | null;
+  contact: string | null;
+  debit: string | null;
+  credit: string | null;
+}
+
 interface Props {
   accountId: string;
   clientId: string;
@@ -65,6 +63,7 @@ interface Props {
   monthColumns: string[];
   ledgerBalances: Record<string, number>;
   closingBalance: number;
+  glMovements: GLMovement[];
 }
 
 // ------------------------------------------------------------------
@@ -81,6 +80,7 @@ export function PrepaymentRecon({
   monthColumns,
   ledgerBalances,
   closingBalance,
+  glMovements,
 }: Props) {
   const router = useRouter();
   const [showForm, setShowForm] = useState(false);
@@ -100,14 +100,6 @@ export function PrepaymentRecon({
   const [endDate, setEndDate] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [spreadMethod, setSpreadMethod] = useState<SpreadMethod>("equal");
-  const [xeroInvoiceId, setXeroInvoiceId] = useState<string | null>(null);
-  const [xeroInvoiceUrl, setXeroInvoiceUrl] = useState<string | null>(null);
-
-  // Invoice search state
-  const [invoiceSearch, setInvoiceSearch] = useState("");
-  const [invoiceResults, setInvoiceResults] = useState<InvoiceResult[]>([]);
-  const [invoiceSearching, setInvoiceSearching] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceResult | null>(null);
 
   // Filter out cancelled prepayments
   const activePrepayments = initialPrepayments.filter(
@@ -141,8 +133,6 @@ export function PrepaymentRecon({
         totalClosing += parseFloat(line.closingBalance);
       } else {
         // If no line for this month, the prepayment may not cover it.
-        // Check if this month is before the prepayment start — carry opening balance
-        // Or after the prepayment end — balance is 0
         const allLines = scheduleLines.filter(
           (l) => l.prepaymentId === p.id
         );
@@ -154,10 +144,8 @@ export function PrepaymentRecon({
             a.monthEndDate > b.monthEndDate ? a : b
           );
           if (month < firstLine.monthEndDate) {
-            // Before schedule starts - balance is total amount
             totalClosing += parseFloat(p.totalAmount);
           } else if (month > lastLine.monthEndDate) {
-            // After schedule ends - fully amortised
             totalClosing += 0;
           }
         }
@@ -168,6 +156,17 @@ export function PrepaymentRecon({
       closingBalance: Math.round(totalClosing * 100) / 100,
     };
   }
+
+  // GL movements totals
+  const glTotalDebit = glMovements.reduce(
+    (sum, m) => sum + parseFloat(m.debit || "0"),
+    0
+  );
+  const glTotalCredit = glMovements.reduce(
+    (sum, m) => sum + parseFloat(m.credit || "0"),
+    0
+  );
+  const glNetMovement = glTotalDebit - glTotalCredit;
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -186,8 +185,6 @@ export function PrepaymentRecon({
     formData.set("totalAmount", totalAmount);
     formData.set("spreadMethod", spreadMethod);
     formData.set("periodId", periodId);
-    if (xeroInvoiceId) formData.set("xeroInvoiceId", xeroInvoiceId);
-    if (xeroInvoiceUrl) formData.set("xeroInvoiceUrl", xeroInvoiceUrl);
 
     const result = await createPrepayment(formData);
     if (result && "error" in result && result.error) {
@@ -200,11 +197,6 @@ export function PrepaymentRecon({
       setEndDate("");
       setTotalAmount("");
       setSpreadMethod("equal");
-      setXeroInvoiceId(null);
-      setXeroInvoiceUrl(null);
-      setInvoiceSearch("");
-      setInvoiceResults([]);
-      setSelectedInvoice(null);
       setShowForm(false);
       router.refresh();
     }
@@ -266,41 +258,6 @@ export function PrepaymentRecon({
     setLoading(false);
   }
 
-  async function handleInvoiceSearch() {
-    if (!invoiceSearch.trim() || invoiceSearch.trim().length < 2) return;
-    setInvoiceSearching(true);
-    setInvoiceResults([]);
-
-    const result = await searchXeroInvoices(clientId, invoiceSearch.trim());
-    if ("error" in result) {
-      setError(result.error);
-    } else {
-      setInvoiceResults(result.invoices);
-    }
-    setInvoiceSearching(false);
-  }
-
-  function selectInvoice(invoice: InvoiceResult) {
-    setSelectedInvoice(invoice);
-    setXeroInvoiceId(invoice.invoiceId);
-    setXeroInvoiceUrl(invoice.url);
-    setVendorName(invoice.contactName);
-    setDescription(
-      invoice.reference
-        ? `${invoice.invoiceNumber} — ${invoice.reference}`
-        : invoice.invoiceNumber
-    );
-    setTotalAmount(invoice.total.toFixed(2));
-    setInvoiceResults([]);
-    setInvoiceSearch("");
-  }
-
-  function clearSelectedInvoice() {
-    setSelectedInvoice(null);
-    setXeroInvoiceId(null);
-    setXeroInvoiceUrl(null);
-  }
-
   // Variance for current viewing month
   const currentMonthTotals = monthTotals[viewingMonthEnd];
   const calculatedClosing = currentMonthTotals?.closingBalance ?? 0;
@@ -335,6 +292,97 @@ export function PrepaymentRecon({
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3">
           <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {/* GL Movements for current month */}
+      {glMovements.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white">
+          <div className="border-b border-gray-200 px-4 py-3">
+            <h3 className="text-sm font-medium text-gray-900">
+              GL Movements — {formatMonthHeaderFull(viewingMonthEnd)}
+            </h3>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Debit entries below relate to invoices journalled to prepayments this month
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Date</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Source</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Description</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Reference</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Contact</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Debit</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Credit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {glMovements.map((m) => {
+                  const debit = parseFloat(m.debit || "0");
+                  const credit = parseFloat(m.credit || "0");
+                  return (
+                    <tr key={m.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-gray-500 whitespace-nowrap font-mono text-xs">
+                        {formatDateShort(m.transactionDate)}
+                      </td>
+                      <td className="px-3 py-2 text-gray-500 whitespace-nowrap text-xs">
+                        {m.source || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-gray-900 max-w-[16rem] truncate">
+                        {m.description || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-gray-500 whitespace-nowrap text-xs">
+                        {m.reference || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-gray-700 max-w-[10rem] truncate">
+                        {m.contact || "-"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                        {debit > 0 ? (
+                          <span className="text-gray-900">{formatCurrencyShort(debit)}</span>
+                        ) : (
+                          <span className="text-gray-300">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                        {credit > 0 ? (
+                          <span className="text-red-600">({formatCurrencyShort(credit)})</span>
+                        ) : (
+                          <span className="text-gray-300">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-gray-50">
+                <tr className="border-t-2 border-gray-300">
+                  <td colSpan={5} className="px-3 py-2 text-sm font-semibold text-gray-900">
+                    Total ({glMovements.length} transaction{glMovements.length !== 1 ? "s" : ""})
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-semibold text-gray-900 whitespace-nowrap">
+                    {glTotalDebit > 0 ? formatCurrencyShort(glTotalDebit) : "-"}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-semibold whitespace-nowrap">
+                    {glTotalCredit > 0 ? (
+                      <span className="text-red-600">({formatCurrencyShort(glTotalCredit)})</span>
+                    ) : "-"}
+                  </td>
+                </tr>
+                <tr className="border-t border-gray-200">
+                  <td colSpan={5} className="px-3 py-2 text-sm font-medium text-gray-700">
+                    Net Movement
+                  </td>
+                  <td colSpan={2} className="px-3 py-2 text-right font-mono font-semibold text-gray-900 whitespace-nowrap">
+                    {formatCurrencyShort(glNetMovement)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       )}
 
@@ -389,8 +437,6 @@ export function PrepaymentRecon({
                 const openingBal = firstVisibleLine
                   ? parseFloat(firstVisibleLine.openingBalance)
                   : (() => {
-                      // Before schedule starts, opening = total amount
-                      // After schedule ends, opening = 0
                       const allPLines = scheduleLines.filter(
                         (l) => l.prepaymentId === p.id
                       );
@@ -414,22 +460,7 @@ export function PrepaymentRecon({
                     }`}
                   >
                     <td className={`sticky left-0 z-10 ${rowBg} px-3 py-2 font-medium text-gray-900 whitespace-nowrap`}>
-                      <span className="flex items-center gap-1.5">
-                        {p.vendorName}
-                        {p.xeroInvoiceUrl && (
-                          <a
-                            href={p.xeroInvoiceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex text-blue-500 hover:text-blue-700"
-                            title="View invoice in Xero"
-                          >
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                            </svg>
-                          </a>
-                        )}
-                      </span>
+                      {p.vendorName}
                     </td>
                     <td className="px-3 py-2 text-gray-700 max-w-[12rem] truncate">
                       {p.description || "-"}
@@ -713,88 +744,6 @@ export function PrepaymentRecon({
 
         {showForm && (
           <form onSubmit={handleCreate} className="border-t border-gray-200 p-4">
-            {/* Xero Invoice Search */}
-            <div className="mb-4 rounded-md border border-gray-200 bg-gray-50 p-3">
-              <label className="block text-xs font-medium text-gray-500 mb-1.5">
-                Link Xero Invoice (optional)
-              </label>
-              {selectedInvoice ? (
-                <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
-                  <svg className="h-4 w-4 flex-shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span className="font-medium text-blue-900">{selectedInvoice.invoiceNumber}</span>
-                  <span className="text-blue-700">{selectedInvoice.contactName}</span>
-                  <span className="font-mono text-blue-700">
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(selectedInvoice.total)}
-                  </span>
-                  <a
-                    href={selectedInvoice.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-auto text-blue-500 hover:text-blue-700"
-                    title="View in Xero"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </a>
-                  <button
-                    type="button"
-                    onClick={clearSelectedInvoice}
-                    className="text-blue-400 hover:text-blue-600 text-xs font-medium"
-                  >
-                    Clear
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={invoiceSearch}
-                      onChange={(e) => setInvoiceSearch(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleInvoiceSearch(); } }}
-                      placeholder="Search by vendor name or invoice number..."
-                      className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleInvoiceSearch}
-                      disabled={invoiceSearching || invoiceSearch.trim().length < 2}
-                      className="rounded-md bg-gray-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                    >
-                      {invoiceSearching ? "Searching..." : "Search Xero"}
-                    </button>
-                  </div>
-                  {invoiceResults.length > 0 && (
-                    <div className="mt-2 max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-white">
-                      {invoiceResults.map((inv) => (
-                        <button
-                          key={inv.invoiceId}
-                          type="button"
-                          onClick={() => selectInvoice(inv)}
-                          className="flex w-full items-center gap-3 border-b border-gray-100 px-3 py-2 text-left text-sm hover:bg-blue-50 last:border-b-0"
-                        >
-                          <span className="font-mono text-xs text-gray-500">{inv.invoiceNumber}</span>
-                          <span className="flex-1 truncate font-medium text-gray-900">{inv.contactName}</span>
-                          <span className="text-xs text-gray-500">{inv.date}</span>
-                          <span className="font-mono text-sm text-gray-900">
-                            {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(inv.total)}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {invoiceResults.length === 0 && invoiceSearch && !invoiceSearching && (
-                    <p className="mt-1 text-xs text-gray-400">
-                      No results found. You can still create the prepayment manually below.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500">
@@ -1062,6 +1011,15 @@ function formatMonthHeader(monthEndDate: string): string {
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = String(d.getFullYear()).slice(-2);
   return `${String(day).padStart(2, "0")}/${month}/${year}`;
+}
+
+function formatMonthHeaderFull(monthEndDate: string): string {
+  const d = new Date(monthEndDate + "T00:00:00");
+  const MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function formatDateShort(dateStr: string): string {
