@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createPrepayment,
@@ -58,6 +58,7 @@ interface Props {
   periodId: string;
   periodYear: number;
   periodMonth: number;
+  accountCode: string;
   prepayments: PrepaymentRow[];
   scheduleLines: ScheduleLine[];
   monthColumns: string[];
@@ -75,6 +76,7 @@ export function PrepaymentRecon({
   periodId,
   periodYear,
   periodMonth,
+  accountCode,
   prepayments: initialPrepayments,
   scheduleLines,
   monthColumns,
@@ -100,6 +102,25 @@ export function PrepaymentRecon({
   const [endDate, setEndDate] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [spreadMethod, setSpreadMethod] = useState<SpreadMethod>("equal");
+  const formRef = useRef<HTMLDivElement>(null);
+
+  /** Pre-fill the Add Prepayment form from a GL movement row */
+  function prefillFromMovement(movement: GLMovement) {
+    setVendorName(movement.contact || "");
+    setDescription(
+      [movement.description, movement.reference].filter(Boolean).join(" — ") || ""
+    );
+    setNominalAccount(accountCode);
+    setTotalAmount(parseFloat(movement.debit || "0").toFixed(2));
+    setStartDate(movement.transactionDate);
+    setEndDate("");
+    setSpreadMethod("equal");
+    setShowForm(true);
+    // Scroll to form after React re-renders
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
 
   // Filter out cancelled prepayments
   const activePrepayments = initialPrepayments.filter(
@@ -317,6 +338,7 @@ export function PrepaymentRecon({
                   <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Contact</th>
                   <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Debit</th>
                   <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Credit</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium uppercase tracking-wider text-gray-500 w-20"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -354,6 +376,17 @@ export function PrepaymentRecon({
                           <span className="text-gray-300">-</span>
                         )}
                       </td>
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        {debit > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => prefillFromMovement(m)}
+                            className="rounded bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                          >
+                            Create Prepayment
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -371,6 +404,7 @@ export function PrepaymentRecon({
                       <span className="text-red-600">({formatCurrencyShort(glTotalCredit)})</span>
                     ) : "-"}
                   </td>
+                  <td />
                 </tr>
                 <tr className="border-t border-gray-200">
                   <td colSpan={5} className="px-3 py-2 text-sm font-medium text-gray-700">
@@ -379,6 +413,7 @@ export function PrepaymentRecon({
                   <td colSpan={2} className="px-3 py-2 text-right font-mono font-semibold text-gray-900 whitespace-nowrap">
                     {formatCurrencyShort(glNetMovement)}
                   </td>
+                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -725,7 +760,7 @@ export function PrepaymentRecon({
       )}
 
       {/* Add Prepayment Form */}
-      <div className="rounded-lg border border-gray-200 bg-white">
+      <div ref={formRef} className="rounded-lg border border-gray-200 bg-white">
         <button
           onClick={() => setShowForm(!showForm)}
           className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
