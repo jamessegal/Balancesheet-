@@ -27,6 +27,8 @@ import { loadPensionsPayableData } from "@/app/actions/recon-modules";
 import { loadBankReconData } from "@/app/actions/bank-recon";
 import { loadPrepaymentsData } from "@/app/actions/prepayments";
 import { loadARReconData } from "@/app/actions/ar-recon";
+import { DeferredIncomeRecon } from "@/components/deferred-income-recon";
+import { loadDeferredIncomeData } from "@/app/actions/deferred-income";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -301,6 +303,24 @@ export default async function AccountDetailPage({
       }
     } catch (err) {
       arReconError = err instanceof Error ? err.message : "Unknown error loading AR recon data";
+    }
+  }
+
+  let deferredIncomeData: Awaited<ReturnType<typeof loadDeferredIncomeData>> | null = null;
+  let deferredIncomeError: string | null = null;
+  if (reconModule === "deferred_income") {
+    try {
+      deferredIncomeData = await loadDeferredIncomeData(
+        accountId,
+        clientId,
+        period.periodYear,
+        period.periodMonth
+      );
+      if (deferredIncomeData && "error" in deferredIncomeData) {
+        deferredIncomeError = (deferredIncomeData as unknown as { error: string }).error;
+      }
+    } catch (err) {
+      deferredIncomeError = err instanceof Error ? err.message : "Unknown error loading deferred income data";
     }
   }
 
@@ -736,6 +756,30 @@ export default async function AccountDetailPage({
                 Prepayments module failed to load
               </p>
               <p className="mt-1 text-sm text-red-600">{prepaymentsError}</p>
+            </div>
+          ) : reconModule === "deferred_income" &&
+            deferredIncomeData &&
+            !("error" in deferredIncomeData) ? (
+            <DeferredIncomeRecon
+              accountId={accountId}
+              clientId={clientId}
+              periodId={periodId}
+              periodYear={period.periodYear}
+              periodMonth={period.periodMonth}
+              accountCode={account.accountCode || ""}
+              items={deferredIncomeData.items}
+              scheduleLines={deferredIncomeData.scheduleLines}
+              monthColumns={deferredIncomeData.monthColumns}
+              ledgerBalances={deferredIncomeData.ledgerBalances}
+              closingBalance={balance}
+              glMovements={glTxns}
+            />
+          ) : reconModule === "deferred_income" && deferredIncomeError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-medium text-red-800">
+                Deferred income module failed to load
+              </p>
+              <p className="mt-1 text-sm text-red-600">{deferredIncomeError}</p>
             </div>
           ) : reconModule === "accounts_receivable" &&
             arReconData &&
