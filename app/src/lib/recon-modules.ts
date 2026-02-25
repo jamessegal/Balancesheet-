@@ -6,6 +6,7 @@ export const RECON_MODULES = [
   { value: "accounts_payable", label: "Accounts Payable" },
   { value: "bank", label: "Bank" },
   { value: "prepayments", label: "Prepayments" },
+  { value: "deferred_income", label: "Deferred Income" },
   { value: "accruals", label: "Accruals" },
   { value: "share_capital", label: "Share Capital" },
   { value: "other_debtors", label: "Other Debtors" },

@@ -450,6 +450,82 @@ export const prepaymentScheduleLines = pgTable(
 );
 
 // ============================================================
+// DEFERRED INCOME
+// ============================================================
+
+export const deferredIncomeStatusEnum = pgEnum("deferred_income_status", [
+  "active",
+  "fully_recognised",
+  "cancelled",
+]);
+
+export const deferredIncomeSpreadMethodEnum = pgEnum("deferred_income_spread_method", [
+  "equal",
+  "daily_proration",
+  "half_month",
+]);
+
+export const deferredIncomeItems = pgTable(
+  "deferred_income_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    customerName: text("customer_name").notNull(),
+    description: text("description").notNull(),
+    nominalAccount: text("nominal_account").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    totalAmount: numeric("total_amount", { precision: 18, scale: 2 }).notNull(),
+    currency: varchar("currency", { length: 3 }).notNull().default("GBP"),
+    numberOfMonths: integer("number_of_months").notNull(),
+    monthlyAmount: numeric("monthly_amount", { precision: 18, scale: 2 }).notNull(),
+    spreadMethod: deferredIncomeSpreadMethodEnum("spread_method").notNull().default("equal"),
+    status: deferredIncomeStatusEnum("status").notNull().default("active"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("idx_deferred_income_client").on(table.clientId)]
+);
+
+export const deferredIncomeScheduleLines = pgTable(
+  "deferred_income_schedule_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    deferredIncomeId: uuid("deferred_income_id")
+      .notNull()
+      .references(() => deferredIncomeItems.id, { onDelete: "cascade" }),
+    monthEndDate: date("month_end_date").notNull(),
+    openingBalance: numeric("opening_balance", { precision: 18, scale: 2 }).notNull(),
+    monthlyRecognition: numeric("monthly_recognition", { precision: 18, scale: 2 }).notNull(),
+    closingBalance: numeric("closing_balance", { precision: 18, scale: 2 }).notNull(),
+    originalAmount: numeric("original_amount", { precision: 18, scale: 2 }).notNull(),
+    overrideAmount: numeric("override_amount", { precision: 18, scale: 2 }),
+    isOverridden: boolean("is_overridden").notNull().default(false),
+    auditNotes: text("audit_notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique().on(table.deferredIncomeId, table.monthEndDate),
+    index("idx_deferred_income_schedule_item").on(table.deferredIncomeId),
+    index("idx_deferred_income_schedule_month").on(table.monthEndDate),
+  ]
+);
+
+// ============================================================
 // ACCOUNTS RECEIVABLE RECONCILIATION
 // ============================================================
 
@@ -597,3 +673,7 @@ export type ARInvoiceSnapshot = typeof arInvoiceSnapshots.$inferSelect;
 export type NewARInvoiceSnapshot = typeof arInvoiceSnapshots.$inferInsert;
 export type ARAuditLog = typeof arAuditLog.$inferSelect;
 export type NewARAuditLog = typeof arAuditLog.$inferInsert;
+export type DeferredIncomeItem = typeof deferredIncomeItems.$inferSelect;
+export type NewDeferredIncomeItem = typeof deferredIncomeItems.$inferInsert;
+export type DeferredIncomeScheduleLine = typeof deferredIncomeScheduleLines.$inferSelect;
+export type NewDeferredIncomeScheduleLine = typeof deferredIncomeScheduleLines.$inferInsert;
