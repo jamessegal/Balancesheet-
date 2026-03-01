@@ -24,3 +24,22 @@
 - **#3 Workflow automation** — Consider auto-transition to `in_progress` when user first adds a reconciliation item (saves one click). Current manual flow is acceptable for audit trail.
 - **#10 UX for skipped accounts** — Show greyed out in list with badge, or hide behind toggle? Need to decide.
 - **#12 Export format** — PDF vs Excel vs both? Single month pack vs per-code? Likely: single download for entire month.
+
+---
+
+## Current Sprint: Quick Wins + Top 5 Priorities
+
+### Quick Wins (CSS/UI, no schema changes)
+- [ ] QW1: Extract `formatCurrency` to shared utility — duplicated in 5+ files
+- [ ] QW2: Number font fix — replace `font-mono` with `tabular-nums` on Inter
+- [ ] QW3: Active nav highlighting — highlight current page in nav bar
+- [ ] QW4: Fix pension BF dates bug (#16) — include `itemDate` in BF query
+- [ ] QW5: Reconciliation % on period summary — show variance/reconciled status per account
+- [ ] QW6: Date format DD/MM/YYYY for UK users — transaction dates display
+
+### Top Priorities (features requiring new code / schema)
+- [ ] TP1: User management — admin CRUD for users (manual creation, temp password)
+- [ ] TP2: Month-end pack export — Excel (.xlsx) download for entire period
+- [ ] TP3: GL re-upload safety — warn and show diff when re-uploading
+- [ ] TP4: Period locking after approval — prevent modifications to approved periods
+- [ ] TP5: Confirmation dialogs on destructive actions

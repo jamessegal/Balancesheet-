@@ -8,6 +8,7 @@ import {
   cancelPrepayment,
   deletePrepayment,
 } from "@/app/actions/prepayments";
+import { formatCurrency, formatCurrencyShort } from "@/lib/format";
 
 // ------------------------------------------------------------------
 // Types
@@ -1021,23 +1022,6 @@ function calcMonths(startDate: string, endDate: string): number {
     (end.getMonth() - start.getMonth()) +
     1
   );
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
-function formatCurrencyShort(amount: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
 }
 
 function formatMonthHeader(monthEndDate: string): string {

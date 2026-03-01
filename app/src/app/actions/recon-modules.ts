@@ -136,6 +136,7 @@ export async function loadPensionsPayableData(accountId: string) {
     id: string;
     description: string;
     amount: string;
+    itemDate: string | null;
   }[] = [];
 
   const [priorPeriod] = await db
@@ -168,6 +169,7 @@ export async function loadPensionsPayableData(accountId: string) {
           id: reconciliationItems.id,
           description: reconciliationItems.description,
           amount: reconciliationItems.amount,
+          itemDate: reconciliationItems.itemDate,
         })
         .from(reconciliationItems)
         .where(eq(reconciliationItems.reconAccountId, priorAccount.id))
@@ -221,6 +223,7 @@ export async function loadPensionsPayableData(accountId: string) {
           id: reconciliationItems.id,
           description: reconciliationItems.description,
           amount: reconciliationItems.amount,
+          itemDate: reconciliationItems.itemDate,
         })
         .from(reconciliationItems)
         .where(eq(reconciliationItems.reconAccountId, prevAccount.id));
@@ -235,6 +238,7 @@ export async function loadPensionsPayableData(accountId: string) {
             id: ri.id,
             description: ri.description,
             amount: ri.amount,
+            itemDate: ri.itemDate,
           });
         }
         break;

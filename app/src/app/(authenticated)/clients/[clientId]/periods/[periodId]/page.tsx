@@ -3,13 +3,15 @@ import {
   clients,
   reconciliationPeriods,
   reconciliationAccounts,
+  reconciliationItems,
 } from "@/lib/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, sql } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
 import Link from "next/link";
 import { PullBalanceSheetButton } from "@/components/pull-balance-sheet";
+import { formatCurrency } from "@/lib/format";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -58,6 +60,32 @@ export default async function PeriodDetailPage({
     .where(eq(reconciliationAccounts.periodId, periodId))
     .orderBy(reconciliationAccounts.accountCode);
 
+  // Query reconciliation item totals per account for variance calculation
+  let reconTotals: Record<string, number> = {};
+  if (accounts.length > 0) {
+    try {
+      const totals = await db
+        .select({
+          reconAccountId: reconciliationItems.reconAccountId,
+          total: sql<string>`coalesce(sum(${reconciliationItems.amount}::numeric), 0)`,
+        })
+        .from(reconciliationItems)
+        .where(
+          sql`${reconciliationItems.reconAccountId} in (${sql.join(
+            accounts.map((a) => sql`${a.id}`),
+            sql`, `
+          )})`
+        )
+        .groupBy(reconciliationItems.reconAccountId);
+
+      for (const row of totals) {
+        reconTotals[row.reconAccountId] = parseFloat(row.total);
+      }
+    } catch {
+      // reconciliation_items table may not exist yet
+    }
+  }
+
   // Fetch all periods for this client to find prev/next
   const allPeriods = await db
     .select({
@@ -86,6 +114,12 @@ export default async function PeriodDetailPage({
   const inProgressCount = accounts.filter((a) => a.status === "in_progress").length;
   const reviewCount = accounts.filter((a) => a.status === "ready_for_review").length;
   const approvedCount = accounts.filter((a) => a.status === "approved").length;
+  const reconciledCount = accounts.filter((a) => {
+    const itemsTotal = reconTotals[a.id] || 0;
+    const balance = parseFloat(a.balance);
+    return Math.abs(balance - itemsTotal) < 0.01;
+  }).length;
+  const reconciledPct = totalAccounts > 0 ? Math.round((reconciledCount / totalAccounts) * 100) : 0;
 
   // Group accounts into balance sheet sections based on Xero account types
   const BS_SECTIONS: { label: string; types: string[] }[] = [
@@ -201,9 +235,38 @@ export default async function PeriodDetailPage({
         )}
       </div>
 
+      {/* Reconciliation progress */}
+      {totalAccounts > 0 && (
+        <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium text-gray-700">
+                Reconciled: {reconciledCount}/{totalAccounts} ({reconciledPct}%)
+              </span>
+            </div>
+            {reconciledCount === totalAccounts ? (
+              <span className="inline-flex items-center gap-1 text-sm font-medium text-green-700">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                All reconciled
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
+            <div
+              className={`h-2 rounded-full transition-all ${
+                reconciledPct === 100 ? "bg-green-500" : reconciledPct > 50 ? "bg-blue-500" : "bg-amber-500"
+              }`}
+              style={{ width: `${reconciledPct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Summary cards */}
       {totalAccounts > 0 && (
-        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <SummaryCard label="Draft" count={draftCount} color="gray" />
           <SummaryCard label="In Progress" count={inProgressCount} color="blue" />
           <SummaryCard label="Review" count={reviewCount} color="yellow" />
@@ -236,6 +299,9 @@ export default async function PeriodDetailPage({
                   <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                     Movement
                   </th>
+                  <th className="w-24 px-6 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Recon
+                  </th>
                   <th className="w-32 px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Status
                   </th>
@@ -253,6 +319,7 @@ export default async function PeriodDetailPage({
                       priorTotal={section.priorTotal}
                       clientId={clientId}
                       periodId={periodId}
+                      reconTotals={reconTotals}
                     />
                   );
                 })}
@@ -267,6 +334,7 @@ export default async function PeriodDetailPage({
                     )}
                     clientId={clientId}
                     periodId={periodId}
+                    reconTotals={reconTotals}
                   />
                 )}
               </tbody>
@@ -279,7 +347,7 @@ export default async function PeriodDetailPage({
                   <td className="px-6 py-2 text-right text-sm font-mono font-semibold text-gray-900">
                     {formatCurrency(totalAssets)}
                   </td>
-                  <td colSpan={3} />
+                  <td colSpan={4} />
                 </tr>
                 <tr className="bg-gray-50">
                   <td className="px-6 py-2 text-sm font-semibold text-gray-900">
@@ -288,7 +356,7 @@ export default async function PeriodDetailPage({
                   <td className="px-6 py-2 text-right text-sm font-mono font-semibold text-gray-900">
                     {formatCurrency(totalLiabilities)}
                   </td>
-                  <td colSpan={3} />
+                  <td colSpan={4} />
                 </tr>
                 <tr className="border-t-2 border-gray-400 bg-gray-100">
                   <td className="px-6 py-3 text-sm font-bold text-gray-900">
@@ -297,7 +365,7 @@ export default async function PeriodDetailPage({
                   <td className="px-6 py-3 text-right text-sm font-mono font-bold text-gray-900">
                     {formatCurrency(netAssets)}
                   </td>
-                  <td colSpan={3} />
+                  <td colSpan={4} />
                 </tr>
                 <tr className="bg-gray-100">
                   <td className="px-6 py-3 text-sm font-bold text-gray-900">
@@ -306,7 +374,7 @@ export default async function PeriodDetailPage({
                   <td className="px-6 py-3 text-right text-sm font-mono font-bold text-gray-900">
                     {formatCurrency(totalEquity)}
                   </td>
-                  <td colSpan={3} />
+                  <td colSpan={4} />
                 </tr>
                 <tr className={`border-t-2 ${balances ? "border-green-400 bg-green-50" : "border-red-400 bg-red-50"}`}>
                   <td className={`px-6 py-3 text-sm font-bold ${balances ? "text-green-800" : "text-red-800"}`}>
@@ -315,7 +383,7 @@ export default async function PeriodDetailPage({
                   <td className={`px-6 py-3 text-right text-sm font-mono font-bold ${balances ? "text-green-800" : "text-red-800"}`}>
                     {balances ? formatCurrency(0) : formatCurrency(netAssets - totalEquity)}
                   </td>
-                  <td colSpan={3} />
+                  <td colSpan={4} />
                 </tr>
               </tfoot>
             </table>
@@ -359,6 +427,7 @@ function BSSection({
   priorTotal,
   clientId,
   periodId,
+  reconTotals,
 }: {
   label: string;
   accounts: { id: string; accountCode: string | null; accountName: string; balance: string; priorBalance: string | null; status: string }[];
@@ -366,6 +435,7 @@ function BSSection({
   priorTotal: number;
   clientId: string;
   periodId: string;
+  reconTotals: Record<string, number>;
 }) {
   const movement = total - priorTotal;
 
@@ -373,7 +443,7 @@ function BSSection({
     <>
       {/* Section header */}
       <tr className="bg-gray-100 border-t border-gray-300">
-        <td colSpan={5} className="px-6 py-2 text-xs font-bold uppercase tracking-wider text-gray-700">
+        <td colSpan={6} className="px-6 py-2 text-xs font-bold uppercase tracking-wider text-gray-700">
           {label}
         </td>
       </tr>
@@ -383,6 +453,9 @@ function BSSection({
         const prior = account.priorBalance ? parseFloat(account.priorBalance) : null;
         const mov = prior !== null ? balance - prior : null;
         const badge = STATUS_BADGES_ROW[account.status] || STATUS_BADGES_ROW.draft;
+        const itemsTotal = reconTotals[account.id] || 0;
+        const variance = balance - itemsTotal;
+        const isReconciled = Math.abs(variance) < 0.01;
 
         return (
           <tr key={account.id} className="border-t border-gray-100 hover:bg-gray-50">
@@ -413,6 +486,21 @@ function BSSection({
               }`}
             >
               {mov !== null ? formatCurrency(mov) : "-"}
+            </td>
+            <td className="whitespace-nowrap px-6 py-2.5 text-center text-sm">
+              {isReconciled ? (
+                <span className="inline-flex items-center gap-1 text-green-600" title="Reconciled">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </span>
+              ) : itemsTotal !== 0 ? (
+                <span className="text-xs text-red-500 font-mono" title={`Variance: ${formatCurrency(variance)}`}>
+                  {formatCurrency(variance)}
+                </span>
+              ) : (
+                <span className="text-xs text-gray-300">-</span>
+              )}
             </td>
             <td className="whitespace-nowrap px-6 py-2.5 text-sm">
               <span
@@ -446,16 +534,9 @@ function BSSection({
         >
           {formatCurrency(movement)}
         </td>
-        <td />
+        <td colSpan={2} />
       </tr>
     </>
   );
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
