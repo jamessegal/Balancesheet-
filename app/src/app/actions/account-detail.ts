@@ -11,6 +11,7 @@ import {
   users,
 } from "@/lib/db/schema";
 import { requireRole } from "@/lib/authorization";
+import { checkAccountLocked } from "@/lib/period-lock";
 import { xeroGet } from "@/lib/xero/client";
 import { eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -548,6 +549,10 @@ export async function addReconciliationItem(formData: FormData) {
     return { error: "Description and amount are required" };
   }
 
+  // Check if account is locked (approved)
+  const lockError = await checkAccountLocked(accountId);
+  if (lockError) return { error: lockError };
+
   const amount = parseFloat(amountStr);
   if (isNaN(amount)) {
     return { error: "Amount must be a valid number" };
@@ -614,6 +619,10 @@ export async function deleteReconciliationItem(itemId: string) {
   if (!item) {
     return { error: "Item not found" };
   }
+
+  // Check if account is locked
+  const lockError = await checkAccountLocked(item.reconAccountId);
+  if (lockError) return { error: lockError };
 
   await db
     .delete(reconciliationItems)

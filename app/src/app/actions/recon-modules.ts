@@ -9,6 +9,7 @@ import {
   users,
 } from "@/lib/db/schema";
 import { requireRole } from "@/lib/authorization";
+import { checkAccountLocked } from "@/lib/period-lock";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -22,6 +23,9 @@ export async function addReconItemFromGL(
   amount: string
 ) {
   const session = await requireRole("junior");
+
+  const lockError = await checkAccountLocked(accountId);
+  if (lockError) return { error: lockError };
 
   const [account] = await db
     .select()
@@ -63,6 +67,9 @@ export async function saveClosingItems(
   items: { description: string; amount: string; glTransactionId?: string }[]
 ) {
   const session = await requireRole("junior");
+
+  const lockError = await checkAccountLocked(accountId);
+  if (lockError) return { error: lockError };
 
   const [account] = await db
     .select()

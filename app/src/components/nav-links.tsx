@@ -3,17 +3,26 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+interface NavLinksProps {
+  isAdmin?: boolean;
+}
+
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/clients", label: "Clients" },
 ];
 
-export function NavLinks() {
+const ADMIN_ITEMS = [
+  { href: "/admin/users", label: "Users" },
+];
+
+export function NavLinks({ isAdmin }: NavLinksProps) {
   const pathname = usePathname();
+  const items = isAdmin ? [...NAV_ITEMS, ...ADMIN_ITEMS] : NAV_ITEMS;
 
   return (
     <div className="flex items-center gap-4">
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const isActive =
           pathname === item.href || pathname.startsWith(item.href + "/");
         return (

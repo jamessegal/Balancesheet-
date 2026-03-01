@@ -19,7 +19,7 @@ export async function Nav() {
             >
               Fin-House
             </Link>
-            <NavLinks />
+            <NavLinks isAdmin={session.user.role === "admin"} />
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-500">
