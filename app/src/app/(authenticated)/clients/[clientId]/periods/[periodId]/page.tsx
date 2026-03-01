@@ -11,6 +11,7 @@ import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
 import Link from "next/link";
 import { PullBalanceSheetButton } from "@/components/pull-balance-sheet";
+import { ExportPeriodButton } from "@/components/export-period-button";
 import { formatCurrency } from "@/lib/format";
 
 const MONTH_NAMES = [
@@ -238,9 +239,14 @@ export default async function PeriodDetailPage({
             )}
           </div>
         </div>
-        {isManager && (
-          <PullBalanceSheetButton periodId={periodId} />
-        )}
+        <div className="flex items-center gap-3">
+          {accounts.length > 0 && (
+            <ExportPeriodButton periodId={periodId} />
+          )}
+          {isManager && (
+            <PullBalanceSheetButton periodId={periodId} />
+          )}
+        </div>
       </div>
 
       {/* Reconciliation progress */}
