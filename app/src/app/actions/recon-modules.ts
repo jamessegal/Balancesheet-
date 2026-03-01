@@ -9,6 +9,7 @@ import {
   users,
 } from "@/lib/db/schema";
 import { requireRole } from "@/lib/authorization";
+import { checkAccountLocked } from "@/lib/period-lock";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -22,6 +23,9 @@ export async function addReconItemFromGL(
   amount: string
 ) {
   const session = await requireRole("junior");
+
+  const lockError = await checkAccountLocked(accountId);
+  if (lockError) return { error: lockError };
 
   const [account] = await db
     .select()
@@ -63,6 +67,9 @@ export async function saveClosingItems(
   items: { description: string; amount: string; glTransactionId?: string }[]
 ) {
   const session = await requireRole("junior");
+
+  const lockError = await checkAccountLocked(accountId);
+  if (lockError) return { error: lockError };
 
   const [account] = await db
     .select()
@@ -136,6 +143,7 @@ export async function loadPensionsPayableData(accountId: string) {
     id: string;
     description: string;
     amount: string;
+    itemDate: string | null;
   }[] = [];
 
   const [priorPeriod] = await db
@@ -168,6 +176,7 @@ export async function loadPensionsPayableData(accountId: string) {
           id: reconciliationItems.id,
           description: reconciliationItems.description,
           amount: reconciliationItems.amount,
+          itemDate: reconciliationItems.itemDate,
         })
         .from(reconciliationItems)
         .where(eq(reconciliationItems.reconAccountId, priorAccount.id))
@@ -221,6 +230,7 @@ export async function loadPensionsPayableData(accountId: string) {
           id: reconciliationItems.id,
           description: reconciliationItems.description,
           amount: reconciliationItems.amount,
+          itemDate: reconciliationItems.itemDate,
         })
         .from(reconciliationItems)
         .where(eq(reconciliationItems.reconAccountId, prevAccount.id));
@@ -235,6 +245,7 @@ export async function loadPensionsPayableData(accountId: string) {
             id: ri.id,
             description: ri.description,
             amount: ri.amount,
+            itemDate: ri.itemDate,
           });
         }
         break;

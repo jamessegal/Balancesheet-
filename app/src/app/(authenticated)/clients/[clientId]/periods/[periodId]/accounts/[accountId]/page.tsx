@@ -15,6 +15,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasMinRole } from "@/lib/authorization";
 import Link from "next/link";
+import { formatCurrency, formatDateUK } from "@/lib/format";
 import { AccountStatusControl } from "@/components/account-status";
 import { PullTransactionsButton } from "@/components/pull-transactions";
 import { AddNoteForm } from "@/components/add-note";
@@ -573,7 +574,7 @@ export default async function AccountDetailPage({
                   {glTxns.map((txn) => (
                     <tr key={txn.id} className="hover:bg-gray-50">
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
-                        {txn.transactionDate}
+                        {formatDateUK(txn.transactionDate)}
                       </td>
                       <td className="max-w-[10rem] truncate px-4 py-3 text-sm text-gray-900">
                         {txn.contact || "-"}
@@ -644,7 +645,7 @@ export default async function AccountDetailPage({
                     {transactions.map((txn) => (
                       <tr key={txn.id} className="hover:bg-gray-50">
                         <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
-                          {txn.transactionDate}
+                          {formatDateUK(txn.transactionDate)}
                         </td>
                         <td className="max-w-xs truncate px-4 py-3 text-sm text-gray-900">
                           {txn.description || "-"}
@@ -852,10 +853,3 @@ export default async function AccountDetailPage({
   );
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-  }).format(amount);
-}

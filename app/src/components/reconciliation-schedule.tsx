@@ -6,6 +6,7 @@ import {
   deleteReconciliationItem,
 } from "@/app/actions/account-detail";
 import { useRouter } from "next/navigation";
+import { formatCurrency } from "@/lib/format";
 
 interface ReconciliationItemRow {
   id: string;
@@ -259,12 +260,4 @@ export function ReconciliationSchedule({
       )}
     </div>
   );
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-  }).format(amount);
 }

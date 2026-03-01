@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { logoutAction } from "@/app/actions/auth";
+import { NavLinks } from "./nav-links";
 
 export async function Nav() {
   const session = await auth();
@@ -18,20 +19,7 @@ export async function Nav() {
             >
               Fin-House
             </Link>
-            <div className="flex items-center gap-4">
-              <Link
-                href="/dashboard"
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/clients"
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Clients
-              </Link>
-            </div>
+            <NavLinks isAdmin={session.user.role === "admin"} />
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-500">

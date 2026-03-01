@@ -6,11 +6,13 @@ import {
   addReconciliationItem,
   deleteReconciliationItem,
 } from "@/app/actions/account-detail";
+import { formatCurrency, formatDateUK } from "@/lib/format";
 
 interface BFItem {
   id: string;
   description: string;
   amount: string;
+  itemDate: string | null;
 }
 
 interface GLMovement {
@@ -284,6 +286,9 @@ export function PensionsPayableRecon({
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">
                     Description
                   </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">
+                    Date
+                  </th>
                   <th className="px-4 py-2 text-right text-xs font-medium uppercase text-gray-500">
                     Amount
                   </th>
@@ -302,6 +307,9 @@ export function PensionsPayableRecon({
                           Cleared
                         </span>
                       )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
+                      {formatDateUK(item.itemDate)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2 text-right text-sm font-mono text-gray-900">
                       {bfFullyCleared ? (
@@ -463,7 +471,7 @@ export function PensionsPayableRecon({
                       }
                     >
                       <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-900">
-                        {mov.transactionDate}
+                        {formatDateUK(mov.transactionDate)}
                       </td>
                       <td className="max-w-xs truncate px-4 py-2 text-sm text-gray-900">
                         {mov.description || mov.contact || "-"}
@@ -780,12 +788,4 @@ export function PensionsPayableRecon({
       </div>
     </div>
   );
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-  }).format(amount);
 }

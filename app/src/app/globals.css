@@ -1,1 +1,9 @@
 @import "tailwindcss";
+
+/* Use tabular numbers everywhere — Inter supports this via OpenType.
+   Replaces font-mono on financial figures for proper column alignment
+   without the monospace aesthetic. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+}
